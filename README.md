@@ -92,7 +92,7 @@ Put any files the app loads at runtime in `romfs/`.
   |---|---|---|---|
   | `bevy-ecs-check` | `bevy_ecs` (`std`, no reflect/threads) | 0.19.1 | 9/9 checks ✅ |
   | `bevy-math-check` | `bevy_math` + `glam` 0.32 + `rand` (`std`, `curve`, `rand`) | 0.19.1 | 488/488 checks ✅ (≈ whole public API) |
-  | `bevy-transform-check` | `bevy_transform` (`std`, `bevy-support`) | 0.19.1 | 26/26 checks ✅ |
+  | `bevy-transform-check` | `bevy_transform` (+`bevy_ecs`/`bevy_app`, `std`, `bevy-support`) | 0.19.1 | 129/129 checks ✅ (whole public API + `App::update()`) |
 
   Findings, caveats and the full port classification live in `port.md`
   (`bevy_ecs` §"Was verifiziert ist" / §B1–§B2, `bevy_math` §B9, `bevy_transform`

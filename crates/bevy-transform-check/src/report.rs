@@ -21,7 +21,15 @@ fn line(func: &str, input: &str, expected: &str, got: &str, pass: bool) {
 /// f32 comparison with `EPS` tolerance.
 #[track_caller]
 pub fn f(func: &str, input: &str, expected: f32, got: f32) {
-    let pass = (got - expected).abs() <= EPS;
+    let pass = (got - expected).abs() <= EPS || (got.is_nan() && expected.is_nan());
+    line(func, input, &format!("{expected}"), &format!("{got}"), pass);
+    assert!(pass, "{func} [{input}]: expected {expected}, got {got}");
+}
+
+/// f64 comparison with a looser tolerance.
+#[track_caller]
+pub fn d(func: &str, input: &str, expected: f64, got: f64) {
+    let pass = (got - expected).abs() <= 1.0e-9;
     line(func, input, &format!("{expected}"), &format!("{got}"), pass);
     assert!(pass, "{func} [{input}]: expected {expected}, got {got}");
 }
@@ -46,4 +54,11 @@ pub fn approx<T: Debug>(func: &str, input: &str, expected: T, got: T, pass: bool
 pub fn ok(func: &str, input: &str, expected: &str, got: &str, pass: bool) {
     line(func, input, expected, got, pass);
     assert!(pass, "{func} [{input}]: expected {expected}, got {got}");
+}
+
+/// Boolean check: `expected = "true"`, got = the value.
+#[track_caller]
+pub fn is_true(func: &str, input: &str, got: bool) {
+    line(func, input, "true", if got { "true" } else { "false" }, got);
+    assert!(got, "{func} [{input}]: expected true");
 }

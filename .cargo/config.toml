@@ -1,0 +1,6 @@
+# Force the devkitARM toolchain's gcc as the linker.
+# Arch's `arm-none-eabi-gcc` package installs a conflicting binary in /usr/bin
+# that lacks devkitPro's `3dsx.specs`, and $DEVKITARM/bin is not on PATH by
+# default here (only /opt/devkitpro/tools/bin is, via /etc/profile.d/devkit-env.sh).
+[target.armv6k-nintendo-3ds]
+linker = "/opt/devkitpro/devkitARM/bin/arm-none-eabi-gcc"

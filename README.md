@@ -6,20 +6,31 @@ and [`citro3d`](https://github.com/rust3ds/citro3d-rs).
 Scaffolded with `cargo 3ds new` (the modern replacement for the archived
 `rust3ds/rust3ds-template`).
 
-Right now it runs a little swarm of RGB triangles: every triangle is a
-[`bevy_ecs`](https://docs.rs/bevy_ecs) entity `(Body, Spin, Pulse)`, a `Schedule`
-of `drift` / `bounce` / `spin` systems updates them each frame, and the render
-loop reads the component state back out and draws one `citro3d` triangle per
-entity — on the top screen in stereoscopic 3D (left/right-eye projections driven
-by the hardware 3D slider) and on the bottom screen with a plain centered
-projection.
+Right now it runs a swarm of RGB triangles: every triangle is a
+[`bevy_ecs`](https://docs.rs/bevy_ecs) entity `(Body, Spin, Pulse)` with
+[`bevy_math`](https://docs.rs/bevy_math) `Vec2` positions, a `Schedule` of
+`drift` → `bounce` + `spin` systems updates them each frame, and the render loop
+reads the component state back out — on the top screen in stereoscopic 3D
+(left/right-eye projections driven by the hardware 3D slider) and on the bottom
+screen with a plain centered projection.
 
-Controls: **A** spawns a triangle, **B** despawns one, **START** exits.
+Rendering is **batched for throughput**: instead of a draw call per triangle,
+every triangle is transformed on the CPU into one shared vertex buffer in linear
+memory each frame, then drawn with a single `draw_arrays` per screen (3 total).
+The previous frame's buffer is held one extra frame so `C3D_FrameBegin`'s
+`SYNCDRAW` can guarantee the GPU is done reading it. Frame rate + triangle count
+are printed over `3dslink` (run with `cargo 3ds run --server`).
+
+Controls: **A/B** ±8 triangles · hold **X/Y** ±32 per frame · **SELECT** reset ·
+**START** exit. On New 3DS the 804 MHz clock is enabled at startup.
 
 The PICA200 vertex shader lives in `src/vshader.pica` and is compiled at build
 time by `citro3d`'s `include_shader!` macro (which shells out to devkitPro's
-`picasso`). `bevy_ecs` is core-only (`default-features = false`,
-`features = ["std"]`) — see `crates/bevy-ecs-check` for why that works on the 3DS.
+`picasso`). `bevy_ecs` and `bevy_math` are both core-only
+(`default-features = false`, `features = ["std"]` — no `bevy_reflect`, no `rand`,
+no `curve`) — see `crates/bevy-ecs-check` for why that works on the 3DS.
+`bevy_math` pulls its own `glam` 0.32 alongside `citro3d`'s `glam` 0.30; the two
+coexist and we only touch `bevy_math`'s.
 
 ## Prerequisites
 

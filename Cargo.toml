@@ -13,6 +13,8 @@ ctru-sys = { git = "https://github.com/rust3ds/ctru-rs" }
 citro3d = { git = "https://github.com/rust3ds/citro3d-rs" }
 # Core ECS only — see crates/bevy-ecs-check for why this works on the 3DS.
 bevy_ecs = { version = "0.19", default-features = false, features = ["std"] }
+# glam-based vector/matrix math (Vec2/Vec3/…). No `rand`/`curve`/`bevy_reflect`.
+bevy_math = { version = "0.19", default-features = false, features = ["std"] }
 
 # Optimise even the debug `.3dsx` a bit — an unoptimised bevy_ecs + f32 render
 # loop is painfully slow on ARM11.

@@ -1,45 +1,38 @@
 //! `dove` — a swarm of RGB triangles simulated by `bevy_ecs` and drawn with
-//! `citro3d`.
+//! `citro3d`, tuned for throughput.
 //!
-//! Every entity is `(Body, Spin, Pulse)`. A `bevy_ecs` `Schedule` of four systems
-//! moves them, bounces them off the screen edges, spins them and pulses their
-//! size each frame; the render loop then just reads the resulting component
-//! state back out and draws one triangle per entity.
+//! Every entity is `(Body, Spin, Pulse)` with `bevy_math` `Vec2` positions. A
+//! `bevy_ecs` `Schedule` of `drift` → `bounce` + `spin` advances them each
+//! frame. The render loop reads the component state back out, transforms every
+//! triangle **on the CPU into one shared vertex buffer** (`Vec2::from_angle` /
+//! `Vec2::rotate` for the spin), and then issues exactly **one draw call per
+//! screen** (3 total) instead of one per triangle — so cost scales with
+//! vertices pushed, not with draw-call overhead.
 //!
-//! Controls: **A** spawn a triangle · **B** despawn one · **START** exit.
-//!
-//! Top screen renders the swarm in stereoscopic 3D (left/right eye projections
-//! from the 3D slider); the bottom screen renders the same swarm centered.
+//! Controls: **A/B** ±8 triangles · hold **X/Y** ±32 per frame · **SELECT**
+//! reset · **START** exit. Frame rate + triangle count are printed over
+//! `3dslink` (`cargo 3ds run --server`).
 
+#![feature(allocator_api)]
 // Under `cargo 3ds test`, swap the std test harness (which needs a hosted OS)
 // for `test-runner`'s GDB-backed one. No effect on normal builds.
 #![cfg_attr(test, feature(custom_test_frameworks))]
 #![cfg_attr(test, test_runner(test_runner::run_gdb))]
 
 use bevy_ecs::prelude::*;
+use bevy_math::{Vec2, Vec3};
 use citro3d::macros::include_shader;
 use citro3d::math::{AspectRatio, ClipPlanes, Matrix4, Projection, StereoDisplacement};
 use citro3d::render::{ClearFlags, Frame, ScreenTarget, Target};
 use citro3d::{attrib, buffer, shader, texenv};
+use ctru::linear::LinearAllocator;
 use ctru::prelude::*;
 use ctru::services::gfx::{RawFrameBuffer, Screen, TopScreen3D};
 
-// --- geometry -------------------------------------------------------------------
+// --- geometry ----------------------------------------------------------------
 
-#[repr(C)]
-#[derive(Copy, Clone)]
-struct Vec3 {
-    x: f32,
-    y: f32,
-    z: f32,
-}
-
-impl Vec3 {
-    const fn new(x: f32, y: f32, z: f32) -> Self {
-        Self { x, y, z }
-    }
-}
-
+/// GPU vertex: `glam::Vec3` is `#[repr(C)]` (3 × f32), so this is 24 bytes and
+/// maps straight onto two `Float × 3` attribute loaders.
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct Vertex {
@@ -47,40 +40,32 @@ struct Vertex {
     color: Vec3,
 }
 
-/// One unit triangle centered on the origin; the per-entity model matrix does
-/// the rest.
-static VERTICES: &[Vertex] = &[
-    Vertex {
-        pos: Vec3::new(0.0, 0.45, 0.0),
-        color: Vec3::new(1.0, 0.1, 0.1),
-    },
-    Vertex {
-        pos: Vec3::new(-0.4, -0.35, 0.0),
-        color: Vec3::new(0.1, 1.0, 0.1),
-    },
-    Vertex {
-        pos: Vec3::new(0.4, -0.35, 0.0),
-        color: Vec3::new(0.1, 0.1, 1.0),
-    },
+/// The unit triangle, centred on the origin: `(corner offset, colour)`. The
+/// per-entity rotate/scale/translate is applied on the CPU each frame.
+const BASE: [(Vec2, Vec3); 3] = [
+    (Vec2::new(0.0, 0.45), Vec3::new(1.0, 0.1, 0.1)),
+    (Vec2::new(-0.4, -0.35), Vec3::new(0.1, 1.0, 0.1)),
+    (Vec2::new(0.4, -0.35), Vec3::new(0.1, 0.1, 1.0)),
 ];
 
 static SHADER_BYTES: &[u8] = include_shader!("vshader.pica");
 const CLEAR_COLOR: u32 = 0x1A_1B_2E_FF;
 
-/// How far apart the swarm bounces (world units, at z = `SCENE_Z`).
+/// Bounds the swarm bounces within (world units, at z = `SCENE_Z`).
 const BOUND_X: f32 = 1.7;
 const BOUND_Y: f32 = 1.0;
 const SCENE_Z: f32 = -4.0;
-const MAX_TRIANGLES: usize = 24;
+/// 8192 * 3 verts = 24576, comfortably under `C3D`'s 16-bit vertex count once
+/// you account for the fact we draw the same buffer three times.
+const MAX_TRIANGLES: usize = 8192;
+const START_TRIANGLES: usize = 64;
 
-// --- ECS -----------------------------------------------------------------------
+// --- ECS -------------------------------------------------------------------
 
 #[derive(Component)]
 struct Body {
-    x: f32,
-    y: f32,
-    vx: f32,
-    vy: f32,
+    pos: Vec2,
+    vel: Vec2,
 }
 
 #[derive(Component)]
@@ -97,7 +82,7 @@ struct Pulse {
     phase: f32,
 }
 
-/// Wall-clock-ish simulation time, advanced once per frame.
+/// Simulation clock, advanced once per frame.
 #[derive(Resource)]
 struct SimTime {
     elapsed: f32,
@@ -106,20 +91,20 @@ struct SimTime {
 
 fn drift(time: Res<SimTime>, mut bodies: Query<&mut Body>) {
     for mut b in &mut bodies {
-        b.x += b.vx * time.dt;
-        b.y += b.vy * time.dt;
+        let step = b.vel * time.dt;
+        b.pos += step;
     }
 }
 
 fn bounce(mut bodies: Query<&mut Body>) {
     for mut b in &mut bodies {
-        if b.x.abs() > BOUND_X {
-            b.x = b.x.clamp(-BOUND_X, BOUND_X);
-            b.vx = -b.vx;
+        if b.pos.x.abs() > BOUND_X {
+            b.pos.x = b.pos.x.clamp(-BOUND_X, BOUND_X);
+            b.vel.x = -b.vel.x;
         }
-        if b.y.abs() > BOUND_Y {
-            b.y = b.y.clamp(-BOUND_Y, BOUND_Y);
-            b.vy = -b.vy;
+        if b.pos.y.abs() > BOUND_Y {
+            b.pos.y = b.pos.y.clamp(-BOUND_Y, BOUND_Y);
+            b.vel.y = -b.vel.y;
         }
     }
 }
@@ -130,8 +115,8 @@ fn spin(time: Res<SimTime>, mut spins: Query<&mut Spin>) {
     }
 }
 
-/// Tiny xorshift RNG so each spawned triangle gets its own motion without
-/// pulling in the `rand` crate.
+/// Tiny xorshift RNG so each spawned triangle gets its own motion without the
+/// `rand` crate.
 struct Rng(u32);
 
 impl Rng {
@@ -153,18 +138,16 @@ fn spawn_triangle(world: &mut World, rng: &mut Rng) -> Entity {
     world
         .spawn((
             Body {
-                x: rng.range(-BOUND_X, BOUND_X),
-                y: rng.range(-BOUND_Y, BOUND_Y),
-                vx: rng.range(-1.1, 1.1),
-                vy: rng.range(-1.1, 1.1),
+                pos: Vec2::new(rng.range(-BOUND_X, BOUND_X), rng.range(-BOUND_Y, BOUND_Y)),
+                vel: Vec2::new(rng.range(-1.1, 1.1), rng.range(-1.1, 1.1)),
             },
             Spin {
                 angle: rng.range(0.0, 6.28),
                 rate: rng.range(-3.5, 3.5),
             },
             Pulse {
-                base: rng.range(0.35, 0.6),
-                amp: rng.range(0.05, 0.22),
+                base: rng.range(0.30, 0.55),
+                amp: rng.range(0.04, 0.18),
                 freq: rng.range(1.0, 4.0),
                 phase: rng.range(0.0, 6.28),
             },
@@ -172,12 +155,30 @@ fn spawn_triangle(world: &mut World, rng: &mut Rng) -> Entity {
         .id()
 }
 
-// --- main --------------------------------------------------------------------
+// --- timing ---------------------------------------------------------------
+
+fn ticks() -> u64 {
+    unsafe { ctru_sys::svcGetSystemTick() }
+}
+
+const TICKS_PER_SEC: f64 = ctru_sys::SYSCLOCK_ARM11 as f64;
+
+// --- main ----------------------------------------------------------------
 
 fn main() {
+    // On New 3DS this unlocks the 804 MHz clock + extra cache — free win for the
+    // CPU-side ECS/transform work. No-op on Old 3DS.
+    unsafe { ctru_sys::osSetSpeedupEnable(true) };
+
     let gfx = Gfx::new().expect("Couldn't obtain GFX controller");
     let mut hid = Hid::new().expect("Couldn't obtain HID controller");
     let apt = Apt::new().expect("Couldn't obtain APT controller");
+
+    // Route stdout/stderr back over `3dslink --server` so we can watch the FPS.
+    let mut soc = Soc::new().ok();
+    if let Some(soc) = soc.as_mut() {
+        let _ = soc.redirect_to_3dslink(true, true);
+    }
 
     let mut instance = citro3d::Instance::new().expect("failed to initialize Citro3D");
 
@@ -205,15 +206,14 @@ fn main() {
     let program = shader::Program::new(vertex_shader).unwrap();
     let projection_uniform_idx = program.get_vertex_uniform("projection").unwrap();
 
-    let vbo_data = buffer::Buffer::new(VERTICES);
-    let mut buf_info = buffer::Info::new();
-    let attr_info = prepare_vbos(&mut buf_info, vbo_data);
+    let attr_info = build_attr_info();
+    let attr_perm = attr_info.permutation();
 
     let stage0 = texenv::TexEnv::new()
         .src(texenv::Mode::BOTH, texenv::Source::PrimaryColor, None, None)
         .func(texenv::Mode::BOTH, texenv::CombineFunc::Replace);
 
-    // --- ECS world setup ---
+    // --- ECS world ---
     let mut world = World::new();
     world.insert_resource(SimTime {
         elapsed: 0.0,
@@ -221,30 +221,46 @@ fn main() {
     });
 
     let mut rng = Rng(0x9E37_79B9);
-    let mut triangles: Vec<Entity> = (0..6).map(|_| spawn_triangle(&mut world, &mut rng)).collect();
+    let mut triangles: Vec<Entity> = Vec::with_capacity(MAX_TRIANGLES);
+    resize_swarm(&mut world, &mut rng, &mut triangles, START_TRIANGLES);
 
-    // `drift` must run before `bounce` (bounce reflects whatever drift produced);
-    // `spin` is independent. `.chain()` pins the order.
     let mut schedule = Schedule::default();
     schedule.add_systems(((drift, bounce).chain(), spin));
 
-    // Scratch buffer of (x, y, angle, scale) filled from the ECS each frame.
-    let mut scene: Vec<(f32, f32, f32, f32)> = Vec::with_capacity(MAX_TRIANGLES);
+    // Hold the previous frame's vertex buffer alive until this frame's
+    // `C3D_FrameBegin(SYNCDRAW)` has confirmed the GPU is done reading it.
+    let mut prev_buffer: Option<buffer::Info> = None;
+
+    let mut fps_mark = ticks();
+    let mut fps_frames = 0u32;
 
     while apt.main_loop() {
         hid.scan_input();
-        let keys = hid.keys_down();
+        let down = hid.keys_down();
+        let held = hid.keys_held();
 
-        if keys.contains(KeyPad::START) {
+        if down.contains(KeyPad::START) {
             break;
         }
-        if keys.contains(KeyPad::A) && triangles.len() < MAX_TRIANGLES {
-            triangles.push(spawn_triangle(&mut world, &mut rng));
+        let mut target_count = triangles.len();
+        if down.contains(KeyPad::A) {
+            target_count += 8;
         }
-        if keys.contains(KeyPad::B) {
-            if let Some(entity) = triangles.pop() {
-                world.despawn(entity);
-            }
+        if down.contains(KeyPad::B) {
+            target_count = target_count.saturating_sub(8);
+        }
+        if held.contains(KeyPad::X) {
+            target_count += 32;
+        }
+        if held.contains(KeyPad::Y) {
+            target_count = target_count.saturating_sub(32);
+        }
+        if down.contains(KeyPad::SELECT) {
+            target_count = START_TRIANGLES;
+        }
+        target_count = target_count.min(MAX_TRIANGLES);
+        if target_count != triangles.len() {
+            resize_swarm(&mut world, &mut rng, &mut triangles, target_count);
         }
 
         // Advance the simulation.
@@ -254,65 +270,99 @@ fn main() {
         }
         schedule.run(&mut world);
 
-        // Read the ECS state back out for rendering.
+        // Bake every triangle into one shared vertex buffer in linear memory.
         let elapsed = world.resource::<SimTime>().elapsed;
-        scene.clear();
+        let mut verts: Vec<Vertex, LinearAllocator> =
+            Vec::with_capacity_in(triangles.len() * 3, LinearAllocator);
         let mut query = world.query::<(&Body, &Spin, &Pulse)>();
         for (body, spin, pulse) in query.iter(&world) {
             let scale = pulse.base + pulse.amp * (elapsed * pulse.freq + pulse.phase).sin();
-            scene.push((body.x, body.y, spin.angle, scale));
+            let rotation = Vec2::from_angle(spin.angle);
+            for &(offset, color) in &BASE {
+                let p = rotation.rotate(offset) * scale + body.pos;
+                verts.push(Vertex {
+                    pos: Vec3::new(p.x, p.y, SCENE_Z),
+                    color,
+                });
+            }
         }
+
+        let mut frame_buffer = buffer::Info::new();
+        if !verts.is_empty() {
+            frame_buffer
+                .add(buffer::Buffer::new_in_linear(verts), attr_perm)
+                .unwrap();
+        }
+
+        let projections = calculate_projections();
 
         instance.render_frame_with(|mut frame| {
             fn cast_lifetime_to_closure<'frame, T>(x: T) -> T
             where
-                T: Fn(&mut Frame<'frame>, &'frame mut ScreenTarget<'_>, &Matrix4),
+                T: Fn(&mut Frame<'frame>, &'frame mut ScreenTarget<'_>, &Matrix4, &'frame buffer::Info),
             {
                 x
             }
 
-            let scene = &scene;
-            let draw_swarm = cast_lifetime_to_closure(|frame, target, projection| {
+            let draw_screen = cast_lifetime_to_closure(|frame, target, projection, buf| {
                 target.clear(ClearFlags::ALL, CLEAR_COLOR, 0);
                 frame
                     .select_render_target(target)
                     .expect("failed to set render target");
                 frame.set_texenvs(&[stage0]);
                 frame.set_attr_info(&attr_info);
-
-                for &(x, y, angle, scale) in scene {
-                    let mut model = Matrix4::identity();
-                    model.translate(x, y, SCENE_Z);
-                    model.rotate_z(angle);
-                    model.scale(scale, scale, 1.0);
-
-                    frame.bind_vertex_uniform(projection_uniform_idx, &(projection * model));
+                frame.bind_vertex_uniform(projection_uniform_idx, projection);
+                if !buf.is_empty() {
                     frame
-                        .draw_arrays(buffer::Primitive::Triangles, &buf_info, None)
+                        .draw_arrays(buffer::Primitive::Triangles, buf, None)
                         .unwrap();
                 }
             });
 
             frame.bind_program(&program);
 
-            let Projections {
-                left_eye,
-                right_eye,
-                center,
-            } = calculate_projections();
-
-            draw_swarm(&mut frame, &mut top_left_target, &left_eye);
-            draw_swarm(&mut frame, &mut top_right_target, &right_eye);
-            draw_swarm(&mut frame, &mut bottom_target, &center);
+            draw_screen(&mut frame, &mut top_left_target, &projections.left_eye, &frame_buffer);
+            draw_screen(&mut frame, &mut top_right_target, &projections.right_eye, &frame_buffer);
+            draw_screen(&mut frame, &mut bottom_target, &projections.center, &frame_buffer);
 
             frame
         });
+
+        // The GPU is now done with the frame that was in flight when we entered
+        // `render_frame_with`, so releasing its buffer here is safe.
+        prev_buffer = Some(frame_buffer);
+
+        fps_frames += 1;
+        let now = ticks();
+        let secs = (now - fps_mark) as f64 / TICKS_PER_SEC;
+        if secs >= 0.5 {
+            println!(
+                "{:>6.1} fps | {:>5} triangles | {:>6} verts | 3 draw calls",
+                fps_frames as f64 / secs,
+                triangles.len(),
+                triangles.len() * 3,
+            );
+            fps_frames = 0;
+            fps_mark = now;
+        }
+    }
+
+    drop(prev_buffer);
+}
+
+fn resize_swarm(world: &mut World, rng: &mut Rng, triangles: &mut Vec<Entity>, target: usize) {
+    while triangles.len() < target {
+        triangles.push(spawn_triangle(world, rng));
+    }
+    while triangles.len() > target {
+        if let Some(entity) = triangles.pop() {
+            world.despawn(entity);
+        }
     }
 }
 
-fn prepare_vbos(buf_info: &mut buffer::Info, vbo_data: buffer::Buffer) -> attrib::Info {
+fn build_attr_info() -> attrib::Info {
     let mut attr_info = attrib::Info::new();
-
     // v0 = position (vec3), v1 = colour (vec3)
     attr_info
         .add_loader(attrib::Register::V0, attrib::Format::Float, 3)
@@ -320,9 +370,6 @@ fn prepare_vbos(buf_info: &mut buffer::Info, vbo_data: buffer::Buffer) -> attrib
     attr_info
         .add_loader(attrib::Register::V1, attrib::Format::Float, 3)
         .unwrap();
-
-    buf_info.add(vbo_data, attr_info.permutation()).unwrap();
-
     attr_info
 }
 
@@ -376,10 +423,8 @@ mod tests {
         let e = world
             .spawn((
                 Body {
-                    x: 0.0,
-                    y: 0.0,
-                    vx: 1.0,
-                    vy: 0.0,
+                    pos: Vec2::ZERO,
+                    vel: Vec2::new(1.0, 0.0),
                 },
                 Spin {
                     angle: 0.0,
@@ -393,7 +438,7 @@ mod tests {
         schedule.run(&mut world);
 
         let body = world.entity(e).get::<Body>().unwrap();
-        assert_eq!(body.x, 0.5);
+        assert_eq!(body.pos, Vec2::new(0.5, 0.0));
         assert_eq!(world.entity(e).get::<Spin>().unwrap().angle, 1.0);
     }
 
@@ -407,10 +452,8 @@ mod tests {
         });
         let e = world
             .spawn(Body {
-                x: BOUND_X - 0.01,
-                y: 0.0,
-                vx: 5.0,
-                vy: 0.0,
+                pos: Vec2::new(BOUND_X - 0.01, 0.0),
+                vel: Vec2::new(5.0, 0.0),
             })
             .id();
 
@@ -419,7 +462,23 @@ mod tests {
         schedule.run(&mut world);
 
         let body = world.entity(e).get::<Body>().unwrap();
-        assert!(body.x.abs() <= BOUND_X, "x = {}", body.x);
-        assert!(body.vx < 0.0, "velocity should have flipped");
+        assert!(body.pos.x.abs() <= BOUND_X, "x = {}", body.pos.x);
+        assert!(body.vel.x < 0.0, "velocity should have flipped");
+    }
+
+    /// `resize_swarm` grows and shrinks the entity set to an exact count.
+    #[test]
+    fn resize_swarm_hits_target() {
+        let mut world = World::new();
+        let mut rng = Rng(1);
+        let mut triangles = Vec::new();
+
+        resize_swarm(&mut world, &mut rng, &mut triangles, 50);
+        assert_eq!(triangles.len(), 50);
+        assert_eq!(world.query::<&Body>().iter(&world).count(), 50);
+
+        resize_swarm(&mut world, &mut rng, &mut triangles, 10);
+        assert_eq!(triangles.len(), 10);
+        assert_eq!(world.query::<&Body>().iter(&world).count(), 10);
     }
 }

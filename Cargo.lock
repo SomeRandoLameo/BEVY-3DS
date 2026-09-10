@@ -12,6 +12,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "all-checks"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_math",
+ "bevy_transform",
+ "rand 0.10.2",
+ "test-console",
+ "test-runner",
+]
+
+[[package]]
 name = "annotate-snippets"
 version = "0.11.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -94,6 +107,7 @@ name = "bevy-ecs-check"
 version = "0.1.0"
 dependencies = [
  "bevy_ecs",
+ "test-console",
  "test-runner",
 ]
 
@@ -103,6 +117,7 @@ version = "0.1.0"
 dependencies = [
  "bevy_math",
  "rand 0.10.2",
+ "test-console",
  "test-runner",
 ]
 
@@ -114,6 +129,7 @@ dependencies = [
  "bevy_ecs",
  "bevy_math",
  "bevy_transform",
+ "test-console",
  "test-runner",
 ]
 
@@ -633,6 +649,7 @@ dependencies = [
  "citro3d",
  "ctru-rs",
  "ctru-sys",
+ "test-console",
  "test-runner",
 ]
 
@@ -1348,6 +1365,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "test-console"
+version = "0.1.0"
+dependencies = [
+ "ctru-rs",
 ]
 
 [[package]]

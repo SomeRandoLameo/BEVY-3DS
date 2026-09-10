@@ -19,10 +19,15 @@ every triangle is transformed on the CPU into one shared vertex buffer in linear
 memory each frame, then drawn with a single `draw_arrays` per screen (3 total).
 The previous frame's buffer is held one extra frame so `C3D_FrameBegin`'s
 `SYNCDRAW` can guarantee the GPU is done reading it. Frame rate + triangle count
-are printed over `3dslink` (run with `cargo 3ds run --server`).
+are printed over `3dslink` (run with `cargo 3ds run --server`) and — when the
+bottom-screen console is toggled on with **L** — on the bottom screen itself
+(`… fps | … triangles | … verts | 3 draw calls`). Toggling the console swaps the
+bottom screen between the `citro3d` render target and a `ctru` text console
+(they can't coexist — both own `gfx.bottom_screen`).
 
 Controls: **A/B** ±8 triangles · hold **X/Y** ±32 per frame · **SELECT** reset ·
-**START** exit. On New 3DS the 804 MHz clock is enabled at startup.
+**L** toggle bottom-screen console · **START** exit. On New 3DS the 804 MHz clock
+is enabled at startup.
 
 The PICA200 vertex shader lives in `src/vshader.pica` and is compiled at build
 time by `citro3d`'s `include_shader!` macro (which shells out to devkitPro's
@@ -97,6 +102,24 @@ Put any files the app loads at runtime in `romfs/`.
   Findings, caveats and the full port classification live in `port.md`
   (`bevy_ecs` §"Was verifiziert ist" / §B1–§B2, `bevy_math` §B9, `bevy_transform`
   §B10).
+
+- `crates/test-console` — an interactive `#![test_runner]` for the 3DS. Build a
+  check crate's tests with `--features console` and the **test list appears on
+  the bottom screen** — the first row runs every test in sequence, the rest are
+  the individual tests (Up/Dn move, L/R page, `A` run the highlighted row, `X`
+  run all, `START` exit); results + panic messages scroll on the top screen. The
+  `#[test]`
+  functions are **unchanged** — the `console` feature just swaps
+  `test_runner::run_gdb` for `test_console::run`.
+
+  ```sh
+  ./scripts/send-tests.sh bevy-math-check          # build + 3dslink to a 3DS
+  ./scripts/send-tests.sh bevy-transform-check --ip 192.168.2.50
+  cargo 3ds test --no-run -p bevy-ecs-check --features console   # just build the .3dsx
+  ```
+
+  Default (no `--features console`) is still the GDB runner that
+  `scripts/test-emulator.sh` drives.
 
 ## Emulator (Azahar / Citra / Lime3DS)
 

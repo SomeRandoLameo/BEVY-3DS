@@ -10,14 +10,17 @@
 //! vertices pushed, not with draw-call overhead.
 //!
 //! Controls: **A/B** ±8 triangles · hold **X/Y** ±32 per frame · **SELECT**
-//! reset · **START** exit. Frame rate + triangle count are printed over
-//! `3dslink` (`cargo 3ds run --server`).
+//! reset · **L** toggle the bottom-screen metrics console · **START** exit.
+//! Frame rate + triangle count are printed over `3dslink`
+//! (`cargo 3ds run --server`), and — when open — on the bottom-screen console.
 
 #![feature(allocator_api)]
 // Under `cargo 3ds test`, swap the std test harness (which needs a hosted OS)
-// for `test-runner`'s GDB-backed one. No effect on normal builds.
+// for a 3DS one. Default: GDB-reporting (scripts/test-emulator.sh).
+// `--features console`: interactive on-device runner with a bottom-screen menu.
 #![cfg_attr(test, feature(custom_test_frameworks))]
-#![cfg_attr(test, test_runner(test_runner::run_gdb))]
+#![cfg_attr(all(test, not(feature = "console")), test_runner(test_runner::run_gdb))]
+#![cfg_attr(all(test, feature = "console"), test_runner(test_console::run))]
 
 use bevy_ecs::prelude::*;
 use bevy_math::{Vec2, Vec3};
@@ -25,9 +28,20 @@ use citro3d::macros::include_shader;
 use citro3d::math::{AspectRatio, ClipPlanes, Matrix4, Projection, StereoDisplacement};
 use citro3d::render::{ClearFlags, Frame, ScreenTarget, Target};
 use citro3d::{attrib, buffer, shader, texenv};
+use ctru::console::Console;
 use ctru::linear::LinearAllocator;
 use ctru::prelude::*;
 use ctru::services::gfx::{RawFrameBuffer, Screen, TopScreen3D};
+
+/// What the bottom screen is currently showing. Both variants borrow
+/// `gfx.bottom_screen`, so only one can exist at a time — toggling drops one and
+/// builds the other (see the `KeyPad::L` handler in `main`).
+enum BottomView<'s> {
+    /// A `citro3d` render target: the swarm, drawn with a centered projection.
+    Swarm(ScreenTarget<'s>),
+    /// A text console showing the live render metrics.
+    Console(Console<'s>),
+}
 
 // --- geometry ----------------------------------------------------------------
 
@@ -195,11 +209,19 @@ fn main() {
         .render_target(width, height, top_right, None)
         .expect("failed to create top-right render target");
 
-    let mut bottom_screen = gfx.bottom_screen.borrow_mut();
-    let RawFrameBuffer { width, height, .. } = bottom_screen.raw_framebuffer();
-    let mut bottom_target = instance
-        .render_target(width, height, bottom_screen, None)
-        .expect("failed to create bottom-screen render target");
+    // The bottom screen starts as a swarm render target; `L` toggles it to a
+    // text console and back. Grab its framebuffer size once so we can rebuild
+    // the target on demand.
+    let (bottom_w, bottom_h) = {
+        let mut fb = gfx.bottom_screen.borrow_mut();
+        let RawFrameBuffer { width, height, .. } = fb.raw_framebuffer();
+        (width, height)
+    };
+    let mut bottom = Some(BottomView::Swarm(
+        instance
+            .render_target(bottom_w, bottom_h, gfx.bottom_screen.borrow_mut(), None)
+            .expect("failed to create bottom-screen render target"),
+    ));
 
     let shader = shader::Library::from_bytes(SHADER_BYTES).unwrap();
     let vertex_shader = shader.get(0).unwrap();
@@ -242,6 +264,27 @@ fn main() {
         if down.contains(KeyPad::START) {
             break;
         }
+
+        // Toggle the bottom screen between the swarm and the metrics console.
+        // Dropping the old view releases its `RefMut<gfx.bottom_screen>` before
+        // the replacement re-borrows it.
+        if down.contains(KeyPad::L) {
+            let was_console = matches!(bottom, Some(BottomView::Console(_)));
+            drop(bottom.take());
+            bottom = Some(if was_console {
+                BottomView::Swarm(
+                    instance
+                        .render_target(bottom_w, bottom_h, gfx.bottom_screen.borrow_mut(), None)
+                        .expect("failed to rebuild bottom-screen render target"),
+                )
+            } else {
+                let console = Console::new(gfx.bottom_screen.borrow_mut());
+                console.select();
+                print!("\x1b[2J\x1b[H");
+                BottomView::Console(console)
+            });
+        }
+
         let mut target_count = triangles.len();
         if down.contains(KeyPad::A) {
             target_count += 8;
@@ -323,7 +366,11 @@ fn main() {
 
             draw_screen(&mut frame, &mut top_left_target, &projections.left_eye, &frame_buffer);
             draw_screen(&mut frame, &mut top_right_target, &projections.right_eye, &frame_buffer);
-            draw_screen(&mut frame, &mut bottom_target, &projections.center, &frame_buffer);
+            // The bottom screen only gets a draw call when it's a render target;
+            // as a console it's owned by libctru and left alone here.
+            if let Some(BottomView::Swarm(target)) = bottom.as_mut() {
+                draw_screen(&mut frame, target, &projections.center, &frame_buffer);
+            }
 
             frame
         });
@@ -336,14 +383,30 @@ fn main() {
         let now = ticks();
         let secs = (now - fps_mark) as f64 / TICKS_PER_SEC;
         if secs >= 0.5 {
-            println!(
-                "{:>6.1} fps | {:>5} triangles | {:>6} verts | 3 draw calls",
-                fps_frames as f64 / secs,
+            let fps = fps_frames as f64 / secs;
+            fps_frames = 0;
+            fps_mark = now;
+
+            let metrics = format!(
+                "{:>6.1} fps | {:>5} tris | {:>6} verts | 3 draws",
+                fps,
                 triangles.len(),
                 triangles.len() * 3,
             );
-            fps_frames = 0;
-            fps_mark = now;
+            match bottom.as_ref() {
+                // Console open: `stdout` is the on-screen console (libctru points
+                // it there on the first `Console::new` and doesn't hand it back,
+                // so the `3dslink` stream stops once the console has been used).
+                Some(BottomView::Console(console)) => {
+                    console.select();
+                    print!("\x1b[H");
+                    println!("{metrics}");
+                    println!();
+                    println!("L close   A/B +/-8   hold X/Y +/-32");
+                    println!("SELECT reset        START exit");
+                }
+                _ => println!("{metrics}"),
+            }
         }
     }
 

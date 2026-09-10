@@ -1,6 +1,6 @@
 //! One submodule per `bevy_math` area. Every `#[test]` fn emits `ROW|` lines.
 
-use crate::report;
+mod report;
 
 const EPS: f32 = report::EPS;
 

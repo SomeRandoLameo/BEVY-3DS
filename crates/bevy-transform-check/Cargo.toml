@@ -23,5 +23,9 @@ bevy_math = { version = "0.19", default-features = false, features = ["std"] }
 # For the TransformPlugin / App::update() coverage.
 bevy_app = { version = "0.19", default-features = false, features = ["std"] }
 
+[features]
+console = []
+
 [dev-dependencies]
 test-runner = { git = "https://github.com/rust3ds/ctru-rs" }
+test-console = { path = "../test-console" }

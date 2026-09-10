@@ -11,7 +11,10 @@
 //! Run: `./scripts/test-emulator.sh -p bevy-math-check`.
 
 #![cfg_attr(test, feature(custom_test_frameworks))]
-#![cfg_attr(test, test_runner(test_runner::run_gdb))]
+// Default: GDB-reporting runner (scripts/test-emulator.sh). `--features console`:
+// interactive on-device runner with a bottom-screen menu.
+#![cfg_attr(all(test, not(feature = "console")), test_runner(test_runner::run_gdb))]
+#![cfg_attr(all(test, feature = "console"), test_runner(test_console::run))]
 
 use bevy_math::{Mat4, Quat, Vec3};
 
@@ -27,7 +30,5 @@ pub fn demo() -> Vec3 {
     (proj * view * model).project_point3(Vec3::new(0.5, 0.5, 0.0))
 }
 
-#[cfg(test)]
-mod report;
 #[cfg(test)]
 mod checks;

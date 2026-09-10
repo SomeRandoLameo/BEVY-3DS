@@ -1,6 +1,7 @@
 //! One submodule per `bevy_transform` area. Every `#[test]` fn emits `ROW|` lines.
 
-use crate::report;
+mod report;
+
 use bevy_ecs::prelude::*;
 use bevy_math::{Quat, Vec3};
 use bevy_transform::prelude::*;

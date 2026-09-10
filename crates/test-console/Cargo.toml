@@ -1,0 +1,17 @@
+[package]
+name = "test-console"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# An interactive `#![test_runner]` for the 3DS: shows the test list on the bottom
+# screen, runs whatever you pick (or all), prints results on the top screen.
+# The `#[test]` functions themselves are untouched — a crate opts in by enabling
+# its `console` feature, which swaps `test_runner::run_gdb` for `test_console::run`.
+#
+# Build an interactive test .3dsx and send it to hardware:
+#   cargo 3ds test --no-run -p <crate> --features console
+#   ./scripts/send.sh   # (adapt the artifact path — see README)
+
+[dependencies]
+ctru-rs = { git = "https://github.com/rust3ds/ctru-rs" }

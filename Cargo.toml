@@ -1,5 +1,11 @@
 [workspace]
-members = ["crates/bevy-ecs-check", "crates/bevy-math-check", "crates/bevy-transform-check"]
+members = [
+    "crates/test-console",
+    "crates/bevy-ecs-check",
+    "crates/bevy-math-check",
+    "crates/bevy-transform-check",
+    "crates/all-checks",
+]
 resolver = "3"
 
 [package]
@@ -26,10 +32,16 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 
+[features]
+# `--features console` swaps the GDB test runner for the interactive
+# bottom-screen menu runner. Tests are unchanged either way.
+console = []
+
 [dev-dependencies]
 # Custom test harness that reports results over GDB's File-I/O channel so
 # `cargo 3ds test` works on hardware and in emulators. See scripts/test-emulator.sh.
 test-runner = { git = "https://github.com/rust3ds/ctru-rs" }
+test-console = { path = "crates/test-console" }
 
 [package.metadata.cargo-3ds]
 romfs_dir = "romfs"

@@ -13,7 +13,10 @@
 //! see `README.md`. Run: `./scripts/test-emulator.sh -p bevy-transform-check`.
 
 #![cfg_attr(test, feature(custom_test_frameworks))]
-#![cfg_attr(test, test_runner(test_runner::run_gdb))]
+// Default: GDB-reporting runner (scripts/test-emulator.sh). `--features console`:
+// interactive on-device runner with a bottom-screen menu.
+#![cfg_attr(all(test, not(feature = "console")), test_runner(test_runner::run_gdb))]
+#![cfg_attr(all(test, feature = "console"), test_runner(test_console::run))]
 
 use bevy_math::Vec3;
 use bevy_transform::prelude::*;
@@ -38,7 +41,5 @@ pub fn demo() -> Vec3 {
     world.entity(tip).get::<GlobalTransform>().unwrap().translation()
 }
 
-#[cfg(test)]
-mod report;
 #[cfg(test)]
 mod checks;

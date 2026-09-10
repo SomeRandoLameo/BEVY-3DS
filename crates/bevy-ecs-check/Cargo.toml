@@ -12,7 +12,14 @@ publish = false
 # (which drags in `bevy_tasks`), no `multi_threaded`.
 bevy_ecs = { version = "0.19", default-features = false, features = ["std"] }
 
+[features]
+# `--features console` swaps the GDB test runner for the interactive
+# bottom-screen menu runner (`test-console`). Tests are unchanged either way.
+console = []
+
 [dev-dependencies]
 # GDB-backed test harness so `cargo 3ds test -p bevy-ecs-check` runs on
 # emulator / hardware. See ../../scripts/test-emulator.sh.
 test-runner = { git = "https://github.com/rust3ds/ctru-rs" }
+# Interactive on-device runner (used with `--features console`).
+test-console = { path = "../test-console" }

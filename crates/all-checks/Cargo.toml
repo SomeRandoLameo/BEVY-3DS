@@ -1,0 +1,35 @@
+[package]
+name = "all-checks"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Aggregates every `bevy-*-check` crate's `#[test]`s into ONE on-device test
+# binary, so `./scripts/send-tests.sh all` sends a single `.3dsx` with the whole
+# suite instead of one app per crate.
+#
+# The check logic is NOT duplicated: each crate's `src/checks/` tree is pulled in
+# verbatim with `#[path]` (see `src/lib.rs`). Dependencies / features here must be
+# the union of what those crates need.
+#
+#   ./scripts/send-tests.sh all           # interactive runner -> hardware
+#   ./scripts/test-emulator.sh -p all-checks   # GDB runner -> emulator
+[dependencies]
+# union of bevy-math-check ("std","curve","rand"), bevy-transform-check ("std"),
+# bevy-ecs-check ("std")
+bevy_math = { version = "0.19", default-features = false, features = ["std", "curve", "rand"] }
+bevy_ecs = { version = "0.19", default-features = false, features = ["std"] }
+# `bevy-support` pulls bevy_ecs + bevy_app for bevy_transform's `systems` module.
+bevy_transform = { version = "0.19", default-features = false, features = ["std", "bevy-support"] }
+bevy_app = { version = "0.19", default-features = false, features = ["std"] }
+
+[features]
+# `--features console` swaps the GDB test runner for the interactive
+# bottom-screen menu runner (`test-console`). Tests are unchanged either way.
+console = []
+
+[dev-dependencies]
+# `rand` is referenced at module scope in bevy-math-check's `checks/mod.rs`.
+rand = { version = "0.10", default-features = false }
+test-runner = { git = "https://github.com/rust3ds/ctru-rs" }
+test-console = { path = "../test-console" }

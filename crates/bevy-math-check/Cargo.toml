@@ -16,6 +16,10 @@ publish = false
 # 3DS target; the `sampling` module just needs an explicit `RngCore`.
 bevy_math = { version = "0.19", default-features = false, features = ["std", "curve", "rand"] }
 
+[features]
+console = []
+
 [dev-dependencies]
 rand = { version = "0.10", default-features = false }
 test-runner = { git = "https://github.com/rust3ds/ctru-rs" }
+test-console = { path = "../test-console" }

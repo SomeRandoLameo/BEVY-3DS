@@ -2,7 +2,7 @@
 |---|---|---|---|
 | bevy_ecs | Sicher (core, 1 Thread) | Core-ECS = reine Logik/Daten. Aber: nicht "platformfrei" — Entity-Allocator nutzt 64-bit-Atomics (Fallback, §B1), `thread_local!`, optionaler Parallel-Executor. | ✅ HW: spawn/despawn, `Query<&T>`/`Query<&mut T>`, `Res`/`ResMut`, `Schedule`+`.chain()`, `entity().get()` |
 | bevy_math | Sicher | glam-Reexport + Bevy-Primitives. Zieht **glam 0.32** neben citro3ds glam 0.30 (koexistieren, §B8). glam nutzt auf armv6k den `scalar`-Backend (kein NEON). | ✅ **14/14** (Emu, `crates/bevy-math-check`) — Test-für-Test-Tabelle in **§B9** |
-| bevy_transform | Sicher (1 Thread) | Mathe + Hierarchie. `propagate_transforms` iteriert in neueren Bevy-Versionen **parallel** (`ComputeTaskPool`) → erbt §B2. Single-thread trivial. ||
+| bevy_transform | Sicher (1 Thread) | Mathe + Hierarchie. Propagation nutzt `par_iter`/`ComputeTaskPool` — hat aber ohne `multi_threaded` **explizite serielle Fallbacks** (`serial`-Modul, `iter_mut`-Branches). Die laufen korrekt (§B10). | ✅ **12/12** (Emu, `crates/bevy-transform-check`) — Propagation 3 Ebenen + Rotation + Change-Detection, Transform/GlobalTransform-Mathe. §B10 |
 | bevy_ptr | Sicher | keine Platform-Annahmen | ✅ baut (transitiv via bevy_ecs) |
 | bevy_utils | Sicher | keine Platform-Annahmen | ✅ baut (transitiv) |
 | bevy_platform | Sicher (mit Fallbacks) | **ist** die Platform-Abstraktion: Atomic-Shim (64-bit → `portable-atomic` Fallback), `Instant`, sync-Primitive. Baut für 3DS. | ✅ baut (transitiv) |
@@ -10,7 +10,7 @@
 | bevy_macro_utils | Sicher | Makros, keine Runtime-Abhängigkeit ||
 | bevy_color | Sicher | reine Farbraum-Mathe ||
 | bevy_time | Wahrscheinlich okay | Baut (`bevy_platform::Instant` → `std::time::Instant`). Ob `Instant::now()` auf **3DS-Hardware** liefert, ist UNGEPRÜFT — im Demo bewusst mit `svcGetSystemTick` umgangen (§B6). | Instant auf HW ✗ |
-| bevy_app | Wahrscheinlich okay | Runner passt nicht, App::update() manuell nötig ||
+| bevy_app | Wahrscheinlich okay | Runner passt nicht, `App::update()` manuell nötig. **Kompiliert + linkt** für 3DS (transitiv via `bevy-transform-check`). `App`-Konstruktion / `update()`-Loop noch nicht funktionsgetestet. | ⚠️ baut + linkt |
 | bevy_state | Wahrscheinlich okay | reine State-Machine-Logik ||
 | bevy_diagnostic | Wahrscheinlich okay | evtl. OS-Metriken disablen ||
 | bevy_asset | Riskant | Async-Loader, Thread-Pool-Abhängigkeit ||
@@ -54,17 +54,21 @@ sowie mit Assertions im Emulator (`./scripts/test-emulator.sh`):
 - `bevy_ecs` 0.19.1, `default-features = false, features = ["std"]`:
   `World`, `spawn`/`despawn`, `Query<&T>` **und** `Query<&mut T>` (Iteration + Mutation),
   `Res`/`ResMut`, `Schedule` mit mehreren Systemen + `.chain()`, `world.entity(e).get::<T>()`,
-  Bulk-Spawn/Despawn. **Alles single-threaded.**
+  `Query<Entity, With<T>>`, Bulk-Spawn/Despawn. **Alles single-threaded.**
+  9/9 Checks → **`crates/bevy-ecs-check/README.md`** (Funktion · Eingabe · Erwartet · Ausgabe).
 - `bevy_math` 0.19.1, `default-features = false, features = ["std", "curve"]`:
   14 Assertion-Tests im Emulator (ε = 1e-4), siehe §B9. In `dove` selbst nur
   `["std"]` nötig.
-- Transitiv mitgebaut + gelinkt (nicht separat funktionsgetestet):
+- `bevy_transform` 0.19.1, `default-features = false, features = ["std", "bevy-support"]`:
+  12 Tests im Emulator, siehe §B10 — inkl. der **Propagations-Pipeline** über eine
+  echte Hierarchie (der §B2-Verdacht ist damit für `bevy_transform` entschärft).
+- Transitiv mitgebaut **+ gelinkt** (nicht separat funktionsgetestet):
   `bevy_platform`, `bevy_ptr`, `bevy_utils`, `bevy_tasks` (single-threaded), `bevy_ecs_macros`,
-  `glam` 0.32.
+  `bevy_derive`, `bevy_app` (via `bevy-transform-check`), `glam` 0.32.
 
-Vehikel für weitere isolierte Tests: **`crates/bevy-ecs-check`** und
-**`crates/bevy-math-check`** (jeweils ohne citro3d im Baum, on-device via
-`./scripts/test-emulator.sh -p <crate>`).
+Vehikel für weitere isolierte Tests: **`crates/bevy-ecs-check`**,
+**`crates/bevy-math-check`**, **`crates/bevy-transform-check`** (jeweils ohne
+citro3d im Baum, on-device via `./scripts/test-emulator.sh -p <crate>`).
 
 ### Plattform-Fakten `armv6k-nintendo-3ds`
 
@@ -132,9 +136,12 @@ Bei weiteren Bevy-Crates die glam brauchen: alle auf 0.32 halten.
 
 **§B9 — bevy_math: Testergebnis (`crates/bevy-math-check`).**
 `bevy_math` 0.19.1, Features `["std", "curve"]`. Lauf: `./scripts/test-emulator.sh -p bevy-math-check`
-(Azahar, `test-runner`/GDB). **14 / 14 bestanden**, `test result: ok`, ε = 1e-4.
+(Azahar, `test-runner`/GDB). **14 / 14 Testfunktionen, 66 / 66 Checks bestanden**, ε = 1e-4.
 
-Funktion für Funktion:
+→ Vollständige Tabelle (Funktion · Eingabe · Erwartet · **tatsächliche Ausgabe** · OK):
+**`crates/bevy-math-check/README.md`**.
+
+Überblick, Funktion für Funktion:
 
 | Test-Funktion | geprüfte APIs / Aussagen | Status |
 |---|---|---|
@@ -161,15 +168,62 @@ Funktion für Funktion:
   Nicht abgedeckt: Swizzles, `DVec`/`IVec`/`UVec`, `Affine2/3`, alle `EaseFunction`-Varianten,
   NURBS/`RationalCurve`, `sampling`, `compass`, `FloatOrd`.
 
-### Empfohlene Test-Reihenfolge (jeweils on-device via `crates/bevy-ecs-check`)
+**§B10 — bevy_transform: Testergebnis (`crates/bevy-transform-check`).**
+`bevy_transform` 0.19.1, Features `["std", "bevy-support"]` (zieht `bevy_ecs` + `bevy_app`,
+**kein** `bevy_reflect`, **kein** `multi_threaded`). Lauf:
+`./scripts/test-emulator.sh -p bevy-transform-check`. **12 / 12 Testfunktionen, 26 / 26 Checks bestanden**, ε = 1e-4.
+
+→ Vollständige Tabelle (Funktion · Eingabe · Erwartet · **tatsächliche Ausgabe** · OK):
+**`crates/bevy-transform-check/README.md`**.
+
+Die Propagations-Systeme werden direkt in ein `Schedule` auf einer `World` registriert
+(`mark_dirty_trees` → `propagate_parent_transforms` → `sync_simple_transforms`, `.chain()`,
+`StaticTransformOptimizations::Enabled` als Resource) — genau wie `TransformPlugin` es tut,
+nur ohne `App`.
+
+Funktion für Funktion:
+
+| Test-Funktion | geprüfte APIs / Aussagen | Status |
+|---|---|---|
+| `transform_compose_and_point` | `Transform::from_xyz` / `from_rotation` / `with_scale`; `mul_transform` (Translation + Scale kombiniert); `transform_point` mit Rotation | ✅ |
+| `transform_looking_at_and_basis` | `Transform::looking_at`; `forward()` == `-Z`, `up()` == `Y`, `right()` == `X` | ✅ |
+| `transform_matrix_roundtrip` | `Transform::to_matrix()` · `Mat4::transform_point3` == `Transform::transform_point` | ✅ |
+| `global_transform_ops` | `GlobalTransform::from(Transform)`; **`GlobalTransform * Transform`** (die Propagations-Compose-Op); `transform_point`; `to_scale_rotation_translation`; `compute_transform()`-Roundtrip | ✅ |
+| `transform_point_trait` | `TransformPoint`-Trait auf `Transform` **und** `GlobalTransform` | ✅ |
+| `sync_simple_transform_no_hierarchy` | `sync_simple_transforms` (serieller `iter_mut`-Branch): Entity nur mit `Transform` → `GlobalTransform` = lokal | ✅ |
+| `propagate_three_level_translation` | volle Pipeline über root→mid→tip (`ChildOf`), `GlobalTransform.translation()` je Ebene = akkumuliert | ✅ |
+| `propagate_with_parent_rotation` | Parent 90° um Z, Child lokal `+X` → Child-Welt ≈ `+Y` (Rotations-Komposition durch die Hierarchie) | ✅ |
+| `propagation_reacts_to_parent_change` | 2. Schedule-Lauf nach `Transform`-Mutation am Parent → Child-`GlobalTransform` aktualisiert (Change-Detection) | ✅ |
+| `childof_maintains_children_relationship` | `ChildOf` einfügen → Parent bekommt `Children` mit beiden Kindern (bevy_ecs-Relationship-Hooks auf 3DS) | ✅ |
+| `transform_component_roundtrip` | `require(GlobalTransform, …)` greift beim Spawn; `Query<&mut Transform>` mutieren + zurücklesen | ✅ |
+| `demo_runs` | `demo()`: 3-Ebenen-Rig aufbauen + propagieren → `(10, 5, 2)` | ✅ |
+
+- **Serielle Fallbacks bestätigt:** ohne `multi_threaded` nimmt bevy_transform `mod serial` /
+  die `#[cfg(not(feature = "multi_threaded"))] iter_mut`-Branches — **kein `ComputeTaskPool`**
+  wird angefasst, kein `par_iter`-Panic. `bevy_ecs::par_iter` degradiert selbst zu seriell.
+- **Bonus:** `bevy_app` 0.19.1 **kompiliert + linkt** für 3DS (transitiv). `App`/`update()`
+  weiterhin ungetestet (§B6, §Empfohlene Reihenfolge).
+- Nicht abgedeckt: `TransformHelper`, `BuildChildrenTransformExt` (`with_child` etc.),
+  Orphan-Handling (`RemovedComponents<ChildOf>`-Pfad), `StaticTransformOptimizations`-Subtree-Skipping,
+  sehr tiefe/breite Hierarchien, `multi_threaded`-Propagation.
+
+### Erledigt
+
+- ✅ `bevy_math` — §B9 (`bevy-math-check`, 14/14)
+- ✅ `bevy_transform` inkl. Propagation, Change-Detection, `ChildOf`-Relationship — §B10 (`bevy-transform-check`, 12/12)
+- ✅ `bevy_ecs` core single-threaded — §"Was verifiziert ist"
+- ✅ `bevy_app` kompiliert + linkt (noch nicht `update()`-getestet)
+
+### Empfohlene nächste Schritte (on-device via ein `bevy-*-check`)
 
 1. `Commands` + `world.flush()` + `EntityCommands`
 2. Events (`Events<T>`, Reader/Writer, Update-System über mehrere Frames)
-3. Change Detection über Frames (`Added`/`Changed`)
-4. `SystemParam`-derive, `Local`, exklusives System
+3. Change Detection als eigener Test (`Added`/`Changed`/`Ref`, Tick-Verhalten)
+4. `SystemParam`-derive, `Local`, exklusives System, `ParamSet`
 5. **`multi_threaded`**: `Schedule` mit parallelem Executor + 2 nicht-konfligierenden Systemen,
-   `TaskPoolBuilder` auf 1–2 Threads, **auf Hardware**, Langlauf (§B1/§B2)
+   `TaskPoolBuilder` auf 1–2 Threads, **auf Hardware**, Langlauf (§B1/§B2) — der harte Block
 6. `bevy_reflect` isoliert: `#[derive(Reflect)]`, `TypeRegistry`, `Box<dyn Reflect>`, Downcast
 7. `bevy_platform::Instant` auf Hardware (§B6)
 8. `bevy_app` mit manuellem `app.update()`-Loop (kein Runner)
-9. Langlauf-/Speichertest (§B7)
+9. `bevy_transform` mit `multi_threaded` (parallele Propagation, §B10-Rest)
+10. Langlauf-/Speichertest (§B7)

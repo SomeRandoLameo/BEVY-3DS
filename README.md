@@ -64,28 +64,30 @@ Put any files the app loads at runtime in `romfs/`.
 ## Workspace
 
 - `.` — the `dove` app.
-- `crates/bevy-ecs-check` — a standalone probe that pulls in `bevy_ecs` (core ECS
-  only: `default-features = false`, `features = ["std"]`, no `bevy_render` /
-  `bevy_app`) to confirm it compiles, links, **and runs** on `armv6k-nintendo-3ds`.
+- `crates/bevy-ecs-check`, `crates/bevy-math-check`, `crates/bevy-transform-check`
+  — standalone probes that pull in one Bevy crate (no `citro3d` in the tree) and
+  run assertion tests on-device to confirm it works on `armv6k-nintendo-3ds`.
 
   ```sh
-  cargo 3ds build -p bevy-ecs-check          # compile + link
-  ./scripts/test-emulator.sh -p bevy-ecs-check   # run the ECS tests on-device
+  cargo 3ds build -p bevy-ecs-check                 # compile + link
+  ./scripts/test-emulator.sh -p bevy-ecs-check      # run the tests in the emulator
   ```
 
-  Result: it works — spawn / `Query<&mut T>` / `Resource` / `Schedule` all
-  behave correctly in the emulator (3/3 tests pass). The 3DS has no 64-bit
-  atomics, but `bevy_platform` turns on `portable-atomic`'s self-contained
-  `fallback`, so no `critical-section` impl is needed. `bevy_tasks` is a
-  non-optional dep of `bevy_ecs` and builds fine in its single-threaded form.
+  Each check crate has its own **`README.md`** with the Bevy unit + version, the
+  date/status, and a full table of **every checked function — input, expected,
+  actual output, pass/fail**. Every check prints its result row straight to
+  stdout (bypassing libtest's capture) so the tables are transcribed from real
+  emulator runs. Summary:
 
-- `crates/bevy-math-check` — same idea for `bevy_math` (+ its `glam` 0.32):
-  14 assertion tests (ε = 1e-4) covering `Vec`/`Quat`/`Mat4` (incl. `inverse`,
-  `slerp`, Euler round-trip), `look_at_rh` / `perspective_rh`, `Vec3A` layout,
-  `Dir`/`Rot2`/`Isometry`/`Ray`, bounding-volume raycasts, primitive measures,
-  cubic Béziers, `EasingCurve`, and the newlib trig/`sqrt`/`exp`/`ln` that glam
-  calls into. `./scripts/test-emulator.sh -p bevy-math-check` — 14/14 pass.
-  See `port.md` §B9 for exactly what's covered and the emulator-only caveat.
+  | crate | Bevy unit | version | result |
+  |---|---|---|---|
+  | `bevy-ecs-check` | `bevy_ecs` (`std`, no reflect/threads) | 0.19.1 | 9/9 checks ✅ |
+  | `bevy-math-check` | `bevy_math` + `glam` 0.32 (`std`, `curve`) | 0.19.1 | 66/66 checks ✅ |
+  | `bevy-transform-check` | `bevy_transform` (`std`, `bevy-support`) | 0.19.1 | 26/26 checks ✅ |
+
+  Findings, caveats and the full port classification live in `port.md`
+  (`bevy_ecs` §"Was verifiziert ist" / §B1–§B2, `bevy_math` §B9, `bevy_transform`
+  §B10).
 
 ## Emulator (Azahar / Citra / Lime3DS)
 

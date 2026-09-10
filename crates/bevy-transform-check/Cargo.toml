@@ -1,0 +1,25 @@
+[package]
+name = "bevy-transform-check"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Standalone probe for `bevy_transform` on `armv6k-nintendo-3ds`: the `Transform`
+# / `GlobalTransform` math *and* the ECS propagation systems
+# (`mark_dirty_trees` -> `propagate_parent_transforms` -> `sync_simple_transforms`).
+#
+# port.md §B2 flags that propagation uses `par_iter` / `ComputeTaskPool`; without
+# the `multi_threaded` feature bevy_transform has explicit serial fallbacks, so
+# this verifies those actually run and produce correct global transforms.
+#
+#   cargo 3ds build -p bevy-transform-check
+#   ./scripts/test-emulator.sh -p bevy-transform-check
+[dependencies]
+# `bevy-support` pulls bevy_ecs + bevy_app (needed for the systems module).
+# NOT `bevy_reflect`, NOT `multi_threaded`.
+bevy_transform = { version = "0.19", default-features = false, features = ["std", "bevy-support"] }
+bevy_ecs = { version = "0.19", default-features = false, features = ["std"] }
+bevy_math = { version = "0.19", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+test-runner = { git = "https://github.com/rust3ds/ctru-rs" }

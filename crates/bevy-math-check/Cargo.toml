@@ -11,9 +11,11 @@ publish = false
 #   cargo 3ds build -p bevy-math-check
 #   ./scripts/test-emulator.sh -p bevy-math-check
 [dependencies]
-# `std` (as dove uses) + `curve` (pure logic, no platform deps). NOT `rand`
-# (would pull `getrandom`, which has no 3DS backend).
-bevy_math = { version = "0.19", default-features = false, features = ["std", "curve"] }
+# `std` (as dove uses) + `curve` + `rand`. `rand` (with default-features off, as
+# bevy_math itself pins it) does NOT pull `getrandom` — it builds fine for the
+# 3DS target; the `sampling` module just needs an explicit `RngCore`.
+bevy_math = { version = "0.19", default-features = false, features = ["std", "curve", "rand"] }
 
 [dev-dependencies]
+rand = { version = "0.10", default-features = false }
 test-runner = { git = "https://github.com/rust3ds/ctru-rs" }

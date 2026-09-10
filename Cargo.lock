@@ -102,6 +102,7 @@ name = "bevy-math-check"
 version = "0.1.0"
 dependencies = [
  "bevy_math",
+ "rand 0.10.2",
  "test-runner",
 ]
 
@@ -777,6 +778,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f70749695b063ecbf6b62949ccccde2e733ec3ecbbd71d467dca4e5c6c97cca0"
 dependencies = [
  "bytemuck",
+ "rand 0.10.2",
  "serde_core",
 ]
 

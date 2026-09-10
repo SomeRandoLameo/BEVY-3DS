@@ -56,8 +56,17 @@ touching `PATH`. Alternatively, put `$DEVKITARM/bin` ahead of `/usr/bin` on
 ```sh
 cargo 3ds build              # -> target/armv6k-nintendo-3ds/debug/dove.3dsx
 cargo 3ds build --release
-cargo 3ds run -- --address <3DS-IP>   # send to hardware via 3dslink
+
+# Send to a 3DS over 3dslink (netload) — 3DS must be in the Homebrew Launcher
+# waiting for network transfer:
+./scripts/send.sh                    # debug build
+./scripts/send.sh --release          # release build
+./scripts/send.sh --release --server # release, then stream stdout/FPS back
 ```
+
+`send.sh` targets `$DOVE_3DS_IP` (default `192.168.2.181`); override with
+`--ip <addr>` or the env var. It wraps `cargo 3ds run` with the cargo-3ds flags
+in the order cargo-3ds requires (`--address`/`--retries` before `--release`).
 
 Put any files the app loads at runtime in `romfs/`.
 
@@ -82,7 +91,7 @@ Put any files the app loads at runtime in `romfs/`.
   | crate | Bevy unit | version | result |
   |---|---|---|---|
   | `bevy-ecs-check` | `bevy_ecs` (`std`, no reflect/threads) | 0.19.1 | 9/9 checks ✅ |
-  | `bevy-math-check` | `bevy_math` + `glam` 0.32 (`std`, `curve`) | 0.19.1 | 66/66 checks ✅ |
+  | `bevy-math-check` | `bevy_math` + `glam` 0.32 + `rand` (`std`, `curve`, `rand`) | 0.19.1 | 488/488 checks ✅ (≈ whole public API) |
   | `bevy-transform-check` | `bevy_transform` (`std`, `bevy-support`) | 0.19.1 | 26/26 checks ✅ |
 
   Findings, caveats and the full port classification live in `port.md`

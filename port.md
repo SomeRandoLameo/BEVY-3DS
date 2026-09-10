@@ -1,7 +1,7 @@
 | Crate | Einstufung | Begründung | getestet |
 |---|---|---|---|
 | bevy_ecs | Sicher (core, 1 Thread) | Core-ECS = reine Logik/Daten. Aber: nicht "platformfrei" — Entity-Allocator nutzt 64-bit-Atomics (Fallback, §B1), `thread_local!`, optionaler Parallel-Executor. | ✅ HW: spawn/despawn, `Query<&T>`/`Query<&mut T>`, `Res`/`ResMut`, `Schedule`+`.chain()`, `entity().get()` |
-| bevy_math | Sicher | glam-Reexport + Bevy-Primitives. Zieht **glam 0.32** neben citro3ds glam 0.30 (koexistieren, §B8). glam nutzt auf armv6k den `scalar`-Backend (kein NEON). | ✅ **14/14** (Emu, `crates/bevy-math-check`) — Test-für-Test-Tabelle in **§B9** |
+| bevy_math | Sicher | glam-Reexport + Bevy-Primitives. Zieht **glam 0.32** neben citro3ds glam 0.30 (koexistieren, §B8), `scalar`-Backend (kein NEON). `rand`-Feature baut auf 3DS (kein `getrandom`, §B9). | ✅ **488/488 Checks** (57 Testfn, Emu, `crates/bevy-math-check`) — quasi die ganze öffentliche API. Vollständige Liste → `crates/bevy-math-check/README.md`, Überblick §B9 |
 | bevy_transform | Sicher (1 Thread) | Mathe + Hierarchie. Propagation nutzt `par_iter`/`ComputeTaskPool` — hat aber ohne `multi_threaded` **explizite serielle Fallbacks** (`serial`-Modul, `iter_mut`-Branches). Die laufen korrekt (§B10). | ✅ **12/12** (Emu, `crates/bevy-transform-check`) — Propagation 3 Ebenen + Rotation + Change-Detection, Transform/GlobalTransform-Mathe. §B10 |
 | bevy_ptr | Sicher | keine Platform-Annahmen | ✅ baut (transitiv via bevy_ecs) |
 | bevy_utils | Sicher | keine Platform-Annahmen | ✅ baut (transitiv) |
@@ -15,7 +15,7 @@
 | bevy_diagnostic | Wahrscheinlich okay | evtl. OS-Metriken disablen ||
 | bevy_asset | Riskant | Async-Loader, Thread-Pool-Abhängigkeit ||
 | bevy_tasks | Riskant | **Nicht-optionale Dep von bevy_ecs** — baut + linkt schon jetzt (single-threaded Form). `multi_threaded` zieht `async-executor` + `concurrent-queue` und echte Threads → §B2. | ⚠️ baut single-thread; `multi_threaded` ✗ |
-| bevy_reflect | Riskant | schwergewichtig, Compile-Zeit/Binary-Size. Manche Feature-Pfade (`rand`, `uuid`) können `getrandom` in den Runtime-Graph ziehen → §B5. Gate für app/scene/state/asset. ||
+| bevy_reflect | Riskant | schwergewichtig, Compile-Zeit/Binary-Size. `uuid`-Feature-Pfade können `getrandom` ziehen → §"Plattform-Fakten". Gate für app/scene/state/asset. ||
 | bevy_scene | Riskant | hängt an reflect ||
 | bevy_gltf | Riskant | hängt an Asset/Mesh/Image-Pipeline ||
 | bevy_mesh | Riskant | Datenstruktur ok, aber eng an render gekoppelt ||
@@ -56,9 +56,9 @@ sowie mit Assertions im Emulator (`./scripts/test-emulator.sh`):
   `Res`/`ResMut`, `Schedule` mit mehreren Systemen + `.chain()`, `world.entity(e).get::<T>()`,
   `Query<Entity, With<T>>`, Bulk-Spawn/Despawn. **Alles single-threaded.**
   9/9 Checks → **`crates/bevy-ecs-check/README.md`** (Funktion · Eingabe · Erwartet · Ausgabe).
-- `bevy_math` 0.19.1, `default-features = false, features = ["std", "curve"]`:
-  14 Assertion-Tests im Emulator (ε = 1e-4), siehe §B9. In `dove` selbst nur
-  `["std"]` nötig.
+- `bevy_math` 0.19.1, `default-features = false, features = ["std", "curve", "rand"]`:
+  **488 Assertion-Checks** (57 Testfunktionen) im Emulator — nahezu die komplette
+  öffentliche API. Siehe §B9 / `crates/bevy-math-check/README.md`. In `dove` selbst nur `["std"]` nötig.
 - `bevy_transform` 0.19.1, `default-features = false, features = ["std", "bevy-support"]`:
   12 Tests im Emulator, siehe §B10 — inkl. der **Propagations-Pipeline** über eine
   echte Hierarchie (der §B2-Verdacht ist damit für `bevy_transform` entschärft).
@@ -77,9 +77,11 @@ citro3d im Baum, on-device via `./scripts/test-emulator.sh -p <crate>`).
   `pointer_width = 32`.
 - **Panic:** `unwind` wird unterstützt (`std`-Build zieht `panic_unwind`/`unwind`). Bevy-Panics
   (fehlende Resource, Query-Konflikt) beenden die Homebrew sauber statt `abort`.
-- **`getrandom`:** kein Backend für dieses Target. Aktuell **nicht** im Runtime-Graph (nur Host-
-  Build-Deps). Sobald ein Feature es reinzieht (`rand`, teils `bevy_reflect`, `uuid`), bricht der
-  Build — dann `getrandom` „custom"-Backend + Register nötig (`ps:GenerateRandomBytes` / `ctru`).
+- **`getrandom`:** kein Backend für dieses Target. **`rand` selbst ist okay** — mit
+  `default-features = false` (wie `bevy_math`/`bevy_ecs` es pinnen) zieht es kein `getrandom`
+  und baut sauber; man muss nur einen expliziten `RngCore`/`TryRng` liefern (kein `OsRng`).
+  Erst Features die `getrandom` *direkt* wollen (`rand/os_rng`, `uuid/v4`, evtl. `rand/thread_rng`)
+  brechen den Build — dann `getrandom` „custom"-Backend nötig (`ps:GenerateRandomBytes`).
 - **Threads:** `std::thread` läuft über `pthread-3ds`. Old 3DS: 2 Cores, Core 1 großteils OS
   (Homebrew bekommt Zeitscheibe); New 3DS: Cores 2+3 frei (804 MHz via `osSetSpeedupEnable`).
   Kein automatisches `num_cpus`-Sizing — Threadpools **explizit** begrenzen.
@@ -135,38 +137,44 @@ citro3ds Uniform-API übergeben werden — über `[f32; 16]` / `Matrix4::from_*`
 Bei weiteren Bevy-Crates die glam brauchen: alle auf 0.32 halten.
 
 **§B9 — bevy_math: Testergebnis (`crates/bevy-math-check`).**
-`bevy_math` 0.19.1, Features `["std", "curve"]`. Lauf: `./scripts/test-emulator.sh -p bevy-math-check`
-(Azahar, `test-runner`/GDB). **14 / 14 Testfunktionen, 66 / 66 Checks bestanden**, ε = 1e-4.
+`bevy_math` 0.19.1, Features `["std", "curve", "rand"]`. Lauf:
+`./scripts/test-emulator.sh -p bevy-math-check` (Azahar, `test-runner`/GDB).
+**57 / 57 Testfunktionen · 488 / 488 Checks bestanden**, ε = 1e-4 (f32) / 1e-9 (f64).
 
-→ Vollständige Tabelle (Funktion · Eingabe · Erwartet · **tatsächliche Ausgabe** · OK):
-**`crates/bevy-math-check/README.md`**.
+→ **Vollständige Liste** (jede Funktion · Eingabe · Erwartet · **tatsächliche Ausgabe** · OK,
+57 Sektionen): **`crates/bevy-math-check/README.md`**.
 
-Überblick, Funktion für Funktion:
+Abgedeckt (nahezu die gesamte öffentliche API):
 
-| Test-Funktion | geprüfte APIs / Aussagen | Status |
-|---|---|---|
-| `float_ops_match_known_values` | `bevy_math::ops::{sin,cos,tan,atan2,sqrt,powf,exp,ln,cbrt,hypot}` (= newlib) gegen bekannte Werte; zusätzlich `f32::sin`/`f32::sqrt` | ✅ |
-| `vector_algebra` | `Vec3` dot / cross / length / `normalize().length()==1` / distance / lerp; `Vec4::length_squared`; `Vec2 * f32` | ✅ |
-| `vec2_rotation_helpers` | `Vec2::from_angle` + `.rotate`; `from_angle`↔`to_angle`-Roundtrip; `Vec2::perp`; `Vec2::angle_to` | ✅ |
-| `quaternion_rotation` | `Quat::from_axis_angle` / `from_rotation_x` / `from_rotation_z` (`mul_vec3`); Quat-Komposition; `from_xyzw().normalize()`; `slerp` Mittelpunkt; `from_euler`↔`to_euler` (`EulerRot::XYZ`) | ✅ |
-| `mat4_transforms` | `Mat4::from_translation` / `from_rotation_z` / `from_scale` / `from_scale_rotation_translation`; `transform_point3` / `transform_vector3`; `inverse()` (M·M⁻¹ == I); `determinant`; `Mat4 * Vec4` | ✅ |
-| `mat3_and_mat4_camera` | `Mat3::from_scale_angle_translation` + `transform_point2`; `Mat4::look_at_rh` (Auge → Ursprung); `Mat4::perspective_rh` + `project_point3` (Near-Plane → z≈0) | ✅ |
-| `vec3a_layout_and_parity` | `size_of::<Vec3A>()==16`, `align_of==16`; `Vec3A::cross` == `Vec3::cross` (scalar-Backend) | ✅ |
-| `directions_normalise_and_reject` | `Dir3::new` normalisiert; `Dir3::new(ZERO)` → `Err`; `Dir2::new((3,4))` → `(0.6,0.8)` | ✅ |
-| `rot2_isometry_ray` | `Rot2::degrees(90) * Vec2::X == Y`; `Isometry3d::new(t,r).transform_point`; `Ray3d::new + get_point` | ✅ |
-| `bounding_volume_raycast` | `Aabb3d::new`; `RayCast3d::from_ray` + `IntersectsVolume::intersects` (Hit **und** Miss); `aabb_intersection_at` == 4.0 | ✅ |
-| `primitive_measurements` | `Sphere::new(2).{volume,area}`; `Cuboid::new(2,3,4).{volume,area}` (`Measured3d`) | ✅ |
-| `cubic_bezier_segment` | `CubicSegment::new_bezier([Vec2;4])` + `.position(0/0.5/1)` | ✅ |
-| `curve_feature` | `EasingCurve` (`EaseFunction::Linear` / `QuadraticIn`) + `Curve::sample`; `FunctionCurve` über `Interval::UNIT` (inkl. `sample()==None` außerhalb) | ✅ |
-| `demo_pipeline_runs` | vollständige MVP-Pipeline `proj·view·model` + `project_point3` liefert `is_finite()` | ✅ |
+| Bereich | Umfang |
+|---|---|
+| `bevy_math::ops` | **alle 32 Funktionen** (das newlib-Risiko) — trig, hyperbolisch, exp/log, Wurzeln, Rundung |
+| glam Vektoren | `Vec2/3/3A/4` (jede distinkte Methode), `DVec2/3/4` (f64 → newlib double), `IVec2/3/4`, `UVec3`, `I64Vec3`, `U64Vec3`, `BVec3` |
+| glam Matrizen | `Mat2`, `Mat3`, `Mat3A`, `Mat4`, `DMat4` — Konstruktoren, `transform_point/vector`, `inverse`, `determinant`, `transpose`, `look_at_rh`, `perspective_rh`, `orthographic_rh` |
+| glam Rotation | `Quat` (jede Methode), `DQuat`, `EulerRot` (XYZ + ZYX Roundtrip), `Affine2`, `Affine3A` |
+| `FloatExt` | `lerp` / `inverse_lerp` / `remap`; bevy `VectorSpace`/`ScalarField`/`NormedVectorSpace` |
+| Richtungen | `Dir2`, `Dir3` (`new`/`new_unchecked`/`new_and_length`/`slerp`/`fast_renormalize`), `Rot2` (jede Methode) |
+| `Isometry2d/3d`, `Ray2d/3d` | Konstruktion, `transform_point`, `inverse`, Compose, `get_point` |
+| `Rect` / `IRect` / `URect` | width/height/area/center/size/contains/union/intersect/inflate/`as_*` |
+| `bounding` | `Aabb2d/3d`, `BoundingCircle/Sphere`, `BoundingVolume` (center/half_size/visible_area/contains/merge/grow/shrink/closest_point), **jedes `IntersectsVolume`-Paar 2D+3D**, `RayCast2d/3d`, `AabbCast2d`, `BoundingCircleCast`, `BoundingSphereCast` |
+| Primitives 2D | `Measured2d` (perimeter/area) + `Bounded2d` (`aabb_2d`, `bounding_circle`) für Circle/Ellipse/Rectangle/Rhombus/Triangle2d/Annulus/RegularPolygon/CircularSector/Capsule2d |
+| Primitives 3D | `Measured3d` (area/volume) + `Bounded3d` für Sphere/Cuboid/Cylinder/Cone/Capsule3d/Torus/Tetrahedron |
+| `curve` | `Curve` + Adaptoren (`map`/`reverse`/`repeat`/`ping_pong`/`reparametrize_linear`/`samples`), `Interval`, **alle 39 `EaseFunction`-Varianten** (je @ 0.0/0.5/1.0) |
+| `cubic_splines` | `CubicSegment` (position/velocity/acceleration), `CubicBezier`, `CubicHermite`, `CubicCardinalSpline`, `CubicBSpline`, `CubicNurbs` → `to_curve` |
+| `sampling` (`rand`) | `ShapeSample::sample_interior/sample_boundary` für Rectangle/Circle/Cuboid/Sphere (je 500 Punkte in Grenzen), + Determinismus (gleicher Seed → gleiches Sample) |
+| Sonstiges | `compass` (`CompassQuadrant`/`CompassOctant` ↔ `Dir2`, `opposite`, `is_in_direction`), `FloatOrd` (`total_cmp`, NaN sortiert **zuerst**, `Neg`), `AspectRatio`, `StableInterpolate` (Vec3/Quat/Dir3/Rot2, `smooth_nudge`) |
+| Layout | `size_of` / `align_of` **jedes** öffentlichen Typs (records only) |
 
-- glam nutzt auf `armv6k` den **`scalar`-Backend** (kein SSE/NEON) — `Vec3A` ist echt skalar,
-  aber weiterhin 16-Byte-aligned.
+- **`rand` funktioniert auf dem 3DS-Target.** `rand` 0.10 mit `default-features = false`
+  (wie `bevy_math` es pinnt) zieht **kein `getrandom`** — baut sauber. Nur ein expliziter
+  `RngCore`/`TryRng` nötig (`getrandom`'s `OsRng` gibt's nicht). Damit ist die frühere
+  `getrandom`-Sorge (Plattform-Fakten) für `bevy_math`'s `rand`/`sampling` vom Tisch.
+- glam nutzt auf `armv6k` den **`scalar`-Backend** (kein SSE/NEON) — `Vec3A`/`Mat3A` echt
+  skalar, aber 16-Byte-aligned (bestätigt).
 - **Rest-Unsicherheit:** nur Emulator. VFP-Rundungsmodi / Denormals / exakte NaN-Bitmuster auf
-  echter Hardware nicht 1:1 garantiert (für ε=1e-4-Mathe unkritisch). `rand`-Feature bewusst
-  aus (§B5). `bevy_reflect`-Integration von `bevy_math` (Feature `bevy_reflect`) ungetestet.
-  Nicht abgedeckt: Swizzles, `DVec`/`IVec`/`UVec`, `Affine2/3`, alle `EaseFunction`-Varianten,
-  NURBS/`RationalCurve`, `sampling`, `compass`, `FloatOrd`.
+  echter Hardware nicht 1:1 garantiert (für die Toleranzen unkritisch).
+  Nicht abgedeckt: die ~200 Swizzles pro Vektor (Makro-generiert), kleine Integer-Vektoren
+  (`I8/I16/U8/U16Vec`), `mint`-Interop, `mesh_sampling`, `bevy_reflect`-Integration.
 
 **§B10 — bevy_transform: Testergebnis (`crates/bevy-transform-check`).**
 `bevy_transform` 0.19.1, Features `["std", "bevy-support"]` (zieht `bevy_ecs` + `bevy_app`,
@@ -209,7 +217,7 @@ Funktion für Funktion:
 
 ### Erledigt
 
-- ✅ `bevy_math` — §B9 (`bevy-math-check`, 14/14)
+- ✅ `bevy_math` inkl. `rand`/`sampling` — §B9 (`bevy-math-check`, 488/488 Checks, quasi ganze API)
 - ✅ `bevy_transform` inkl. Propagation, Change-Detection, `ChildOf`-Relationship — §B10 (`bevy-transform-check`, 12/12)
 - ✅ `bevy_ecs` core single-threaded — §"Was verifiziert ist"
 - ✅ `bevy_app` kompiliert + linkt (noch nicht `update()`-getestet)

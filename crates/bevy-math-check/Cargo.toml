@@ -1,0 +1,19 @@
+[package]
+name = "bevy-math-check"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Standalone probe: does `bevy_math` (and its `glam` 0.32) actually *compute
+# correctly* on `armv6k-nintendo-3ds`, not just compile? The 3DS pulls trig /
+# sqrt from devkitPro newlib, so vector/quat/matrix math needs on-device checks.
+#
+#   cargo 3ds build -p bevy-math-check
+#   ./scripts/test-emulator.sh -p bevy-math-check
+[dependencies]
+# `std` (as dove uses) + `curve` (pure logic, no platform deps). NOT `rand`
+# (would pull `getrandom`, which has no 3DS backend).
+bevy_math = { version = "0.19", default-features = false, features = ["std", "curve"] }
+
+[dev-dependencies]
+test-runner = { git = "https://github.com/rust3ds/ctru-rs" }

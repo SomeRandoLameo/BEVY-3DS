@@ -79,6 +79,14 @@ Put any files the app loads at runtime in `romfs/`.
   `fallback`, so no `critical-section` impl is needed. `bevy_tasks` is a
   non-optional dep of `bevy_ecs` and builds fine in its single-threaded form.
 
+- `crates/bevy-math-check` — same idea for `bevy_math` (+ its `glam` 0.32):
+  14 assertion tests (ε = 1e-4) covering `Vec`/`Quat`/`Mat4` (incl. `inverse`,
+  `slerp`, Euler round-trip), `look_at_rh` / `perspective_rh`, `Vec3A` layout,
+  `Dir`/`Rot2`/`Isometry`/`Ray`, bounding-volume raycasts, primitive measures,
+  cubic Béziers, `EasingCurve`, and the newlib trig/`sqrt`/`exp`/`ln` that glam
+  calls into. `./scripts/test-emulator.sh -p bevy-math-check` — 14/14 pass.
+  See `port.md` §B9 for exactly what's covered and the emulator-only caveat.
+
 ## Emulator (Azahar / Citra / Lime3DS)
 
 `cargo-3ds` only knows how to deploy over `3dslink`, so emulator support lives in

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/bevy-ecs-check"]
+members = ["crates/bevy-ecs-check", "crates/bevy-math-check"]
 resolver = "3"
 
 [package]

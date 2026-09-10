@@ -86,6 +86,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevy-math-check"
+version = "0.1.0"
+dependencies = [
+ "bevy_math",
+ "test-runner",
+]
+
+[[package]]
 name = "bevy_ecs"
 version = "0.19.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

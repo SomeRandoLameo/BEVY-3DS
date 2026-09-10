@@ -1,7 +1,7 @@
 | Crate | Einstufung | Begründung | getestet |
 |---|---|---|---|
 | bevy_ecs | Sicher (core, 1 Thread) | Core-ECS = reine Logik/Daten. Aber: nicht "platformfrei" — Entity-Allocator nutzt 64-bit-Atomics (Fallback, §B1), `thread_local!`, optionaler Parallel-Executor. | ✅ HW: spawn/despawn, `Query<&T>`/`Query<&mut T>`, `Res`/`ResMut`, `Schedule`+`.chain()`, `entity().get()` |
-| bevy_math | Sicher | glam-Reexport + Bevy-Primitives. Zieht **glam 0.32** neben citro3ds glam 0.30 (koexistieren, §B8). | ✅ HW: `Vec2`/`Vec3`/`from_angle`/`rotate` |
+| bevy_math | Sicher | glam-Reexport + Bevy-Primitives. Zieht **glam 0.32** neben citro3ds glam 0.30 (koexistieren, §B8). glam nutzt auf armv6k den `scalar`-Backend (kein NEON). | ✅ **14/14** (Emu, `crates/bevy-math-check`) — Test-für-Test-Tabelle in **§B9** |
 | bevy_transform | Sicher (1 Thread) | Mathe + Hierarchie. `propagate_transforms` iteriert in neueren Bevy-Versionen **parallel** (`ComputeTaskPool`) → erbt §B2. Single-thread trivial. ||
 | bevy_ptr | Sicher | keine Platform-Annahmen | ✅ baut (transitiv via bevy_ecs) |
 | bevy_utils | Sicher | keine Platform-Annahmen | ✅ baut (transitiv) |
@@ -55,14 +55,16 @@ sowie mit Assertions im Emulator (`./scripts/test-emulator.sh`):
   `World`, `spawn`/`despawn`, `Query<&T>` **und** `Query<&mut T>` (Iteration + Mutation),
   `Res`/`ResMut`, `Schedule` mit mehreren Systemen + `.chain()`, `world.entity(e).get::<T>()`,
   Bulk-Spawn/Despawn. **Alles single-threaded.**
-- `bevy_math` 0.19.1, `default-features = false, features = ["std"]`:
-  `Vec2`/`Vec3`, `Vec2::from_angle().rotate()`.
+- `bevy_math` 0.19.1, `default-features = false, features = ["std", "curve"]`:
+  14 Assertion-Tests im Emulator (ε = 1e-4), siehe §B9. In `dove` selbst nur
+  `["std"]` nötig.
 - Transitiv mitgebaut + gelinkt (nicht separat funktionsgetestet):
   `bevy_platform`, `bevy_ptr`, `bevy_utils`, `bevy_tasks` (single-threaded), `bevy_ecs_macros`,
   `glam` 0.32.
 
-Vehikel für weitere isolierte Tests: **`crates/bevy-ecs-check`** (bevy_ecs ohne citro3d im Baum,
-on-device via `cargo 3ds test -p bevy-ecs-check` bzw. `./scripts/test-emulator.sh -p bevy-ecs-check`).
+Vehikel für weitere isolierte Tests: **`crates/bevy-ecs-check`** und
+**`crates/bevy-math-check`** (jeweils ohne citro3d im Baum, on-device via
+`./scripts/test-emulator.sh -p <crate>`).
 
 ### Plattform-Fakten `armv6k-nintendo-3ds`
 
@@ -127,6 +129,37 @@ Fragmentierung und Lock-Verhalten unter Last **nicht**. Langlauf-Test auf HW nö
 Binary (semver-inkompatibel, Cargo hält beide). `bevy_math`-`Mat4` kann **nicht** direkt an
 citro3ds Uniform-API übergeben werden — über `[f32; 16]` / `Matrix4::from_*` marshallen.
 Bei weiteren Bevy-Crates die glam brauchen: alle auf 0.32 halten.
+
+**§B9 — bevy_math: Testergebnis (`crates/bevy-math-check`).**
+`bevy_math` 0.19.1, Features `["std", "curve"]`. Lauf: `./scripts/test-emulator.sh -p bevy-math-check`
+(Azahar, `test-runner`/GDB). **14 / 14 bestanden**, `test result: ok`, ε = 1e-4.
+
+Funktion für Funktion:
+
+| Test-Funktion | geprüfte APIs / Aussagen | Status |
+|---|---|---|
+| `float_ops_match_known_values` | `bevy_math::ops::{sin,cos,tan,atan2,sqrt,powf,exp,ln,cbrt,hypot}` (= newlib) gegen bekannte Werte; zusätzlich `f32::sin`/`f32::sqrt` | ✅ |
+| `vector_algebra` | `Vec3` dot / cross / length / `normalize().length()==1` / distance / lerp; `Vec4::length_squared`; `Vec2 * f32` | ✅ |
+| `vec2_rotation_helpers` | `Vec2::from_angle` + `.rotate`; `from_angle`↔`to_angle`-Roundtrip; `Vec2::perp`; `Vec2::angle_to` | ✅ |
+| `quaternion_rotation` | `Quat::from_axis_angle` / `from_rotation_x` / `from_rotation_z` (`mul_vec3`); Quat-Komposition; `from_xyzw().normalize()`; `slerp` Mittelpunkt; `from_euler`↔`to_euler` (`EulerRot::XYZ`) | ✅ |
+| `mat4_transforms` | `Mat4::from_translation` / `from_rotation_z` / `from_scale` / `from_scale_rotation_translation`; `transform_point3` / `transform_vector3`; `inverse()` (M·M⁻¹ == I); `determinant`; `Mat4 * Vec4` | ✅ |
+| `mat3_and_mat4_camera` | `Mat3::from_scale_angle_translation` + `transform_point2`; `Mat4::look_at_rh` (Auge → Ursprung); `Mat4::perspective_rh` + `project_point3` (Near-Plane → z≈0) | ✅ |
+| `vec3a_layout_and_parity` | `size_of::<Vec3A>()==16`, `align_of==16`; `Vec3A::cross` == `Vec3::cross` (scalar-Backend) | ✅ |
+| `directions_normalise_and_reject` | `Dir3::new` normalisiert; `Dir3::new(ZERO)` → `Err`; `Dir2::new((3,4))` → `(0.6,0.8)` | ✅ |
+| `rot2_isometry_ray` | `Rot2::degrees(90) * Vec2::X == Y`; `Isometry3d::new(t,r).transform_point`; `Ray3d::new + get_point` | ✅ |
+| `bounding_volume_raycast` | `Aabb3d::new`; `RayCast3d::from_ray` + `IntersectsVolume::intersects` (Hit **und** Miss); `aabb_intersection_at` == 4.0 | ✅ |
+| `primitive_measurements` | `Sphere::new(2).{volume,area}`; `Cuboid::new(2,3,4).{volume,area}` (`Measured3d`) | ✅ |
+| `cubic_bezier_segment` | `CubicSegment::new_bezier([Vec2;4])` + `.position(0/0.5/1)` | ✅ |
+| `curve_feature` | `EasingCurve` (`EaseFunction::Linear` / `QuadraticIn`) + `Curve::sample`; `FunctionCurve` über `Interval::UNIT` (inkl. `sample()==None` außerhalb) | ✅ |
+| `demo_pipeline_runs` | vollständige MVP-Pipeline `proj·view·model` + `project_point3` liefert `is_finite()` | ✅ |
+
+- glam nutzt auf `armv6k` den **`scalar`-Backend** (kein SSE/NEON) — `Vec3A` ist echt skalar,
+  aber weiterhin 16-Byte-aligned.
+- **Rest-Unsicherheit:** nur Emulator. VFP-Rundungsmodi / Denormals / exakte NaN-Bitmuster auf
+  echter Hardware nicht 1:1 garantiert (für ε=1e-4-Mathe unkritisch). `rand`-Feature bewusst
+  aus (§B5). `bevy_reflect`-Integration von `bevy_math` (Feature `bevy_reflect`) ungetestet.
+  Nicht abgedeckt: Swizzles, `DVec`/`IVec`/`UVec`, `Affine2/3`, alle `EaseFunction`-Varianten,
+  NURBS/`RationalCurve`, `sampling`, `compass`, `FloatOrd`.
 
 ### Empfohlene Test-Reihenfolge (jeweils on-device via `crates/bevy-ecs-check`)
 

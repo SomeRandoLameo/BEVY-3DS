@@ -6,5 +6,10 @@ edition = "2024"
 [dependencies]
 ctru-rs = { git = "https://github.com/rust3ds/ctru-rs" }
 
+[dev-dependencies]
+# Custom test harness that reports results over GDB's File-I/O channel so
+# `cargo 3ds test` works on hardware and in emulators. See scripts/test-emulator.sh.
+test-runner = { git = "https://github.com/rust3ds/ctru-rs" }
+
 [package.metadata.cargo-3ds]
 romfs_dir = "romfs"

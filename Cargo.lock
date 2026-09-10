@@ -123,6 +123,7 @@ name = "dove"
 version = "0.1.0"
 dependencies = [
  "ctru-rs",
+ "test-runner",
 ]
 
 [[package]]
@@ -461,6 +462,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "test-runner"
+version = "0.1.0"
+source = "git+https://github.com/rust3ds/ctru-rs#9576b695897a7474829f490d696807b26a208747"
+dependencies = [
+ "ctru-rs",
+ "ctru-sys",
+ "libc",
 ]
 
 [[package]]

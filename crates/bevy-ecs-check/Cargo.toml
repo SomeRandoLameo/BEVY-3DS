@@ -1,0 +1,18 @@
+[package]
+name = "bevy-ecs-check"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Standalone probe: can `bevy_ecs` compile for `armv6k-nintendo-3ds` on its own,
+# with no `bevy_render` / `bevy_app` / windowing in the tree? Build with:
+#   cargo 3ds build -p bevy-ecs-check
+[dependencies]
+# Start minimal: core ECS + std only. No `bevy_reflect`, no `async_executor`
+# (which drags in `bevy_tasks`), no `multi_threaded`.
+bevy_ecs = { version = "0.19", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+# GDB-backed test harness so `cargo 3ds test -p bevy-ecs-check` runs on
+# emulator / hardware. See ../../scripts/test-emulator.sh.
+test-runner = { git = "https://github.com/rust3ds/ctru-rs" }

@@ -69,6 +69,27 @@ fi
 emu_log="$(mktemp)"
 gdb_script="$(mktemp)"
 emu_pid=""
+
+# The Qt frontends (azahar / citra-qt / lime3ds) persist `-g` back into their
+# config on exit, which would leave every future normal launch hanging on
+# "Waiting for gdb to connect". Undo that.
+reset_persisted_gdbstub() {
+    local cfg
+    for cfg in \
+        "${XDG_CONFIG_HOME:-$HOME/.config}"/azahar-emu/qt-config.ini \
+        "${XDG_CONFIG_HOME:-$HOME/.config}"/citra-emu/qt-config.ini \
+        "${XDG_CONFIG_HOME:-$HOME/.config}"/lime3ds-emu/qt-config.ini
+    do
+        [ -f "$cfg" ] || continue
+        if grep -q '^use_gdbstub=true' "$cfg"; then
+            sed -i \
+                -e 's/^use_gdbstub=true/use_gdbstub=false/' \
+                -e 's#^use_gdbstub\\default=false#use_gdbstub\\default=true#' \
+                "$cfg"
+        fi
+    done
+}
+
 cleanup() {
     if [ -n "$emu_pid" ] && kill -0 "$emu_pid" 2>/dev/null; then
         kill "$emu_pid" 2>/dev/null || true
@@ -81,6 +102,7 @@ cleanup() {
     # Some emulator builds fork/re-exec, so $emu_pid may already be gone while
     # the real process lingers. Match the exact command line we launched.
     pkill -9 -f -- "-g $GDB_PORT $exe_3dsx" 2>/dev/null || true
+    reset_persisted_gdbstub
     rm -f "$emu_log" "$gdb_script"
 }
 trap cleanup EXIT

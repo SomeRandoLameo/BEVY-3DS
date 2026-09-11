@@ -15,6 +15,10 @@
 #![cfg_attr(all(test, feature = "console"), test_runner(test_console::run))]
 
 #[cfg(test)]
+#[path = "../../bevy-color-check/src/checks/mod.rs"]
+mod bevy_color_check;
+
+#[cfg(test)]
 #[path = "../../bevy-ecs-check/src/checks/mod.rs"]
 mod bevy_ecs_check;
 

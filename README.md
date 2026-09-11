@@ -6,13 +6,15 @@ and [`citro3d`](https://github.com/rust3ds/citro3d-rs).
 Scaffolded with `cargo 3ds new` (the modern replacement for the archived
 `rust3ds/rust3ds-template`).
 
-Right now it runs a swarm of RGB triangles: every triangle is a
-[`bevy_ecs`](https://docs.rs/bevy_ecs) entity `(Body, Spin, Pulse)` with
-[`bevy_math`](https://docs.rs/bevy_math) `Vec2` positions, a `Schedule` of
-`drift` → `bounce` + `spin` systems updates them each frame, and the render loop
-reads the component state back out — on the top screen in stereoscopic 3D
-(left/right-eye projections driven by the hardware 3D slider) and on the bottom
-screen with a plain centered projection.
+Right now it runs a swarm of rainbow triangles: every triangle is a
+[`bevy_ecs`](https://docs.rs/bevy_ecs) entity `(Body, Spin, Pulse, Tint)` with
+[`bevy_math`](https://docs.rs/bevy_math) `Vec2` positions and a
+[`bevy_color`](https://docs.rs/bevy_color) `Hsla` hue that spins over time
+(`Hue::rotate_hue`) and gets baked to `Srgba` corner colours 120° apart on the
+wheel. A `Schedule` of `drift` → `bounce` + `spin` + `tint` systems updates them
+each frame, and the render loop reads the component state back out — on the top
+screen in stereoscopic 3D (left/right-eye projections driven by the hardware 3D
+slider) and on the bottom screen with a plain centered projection.
 
 Rendering is **batched for throughput**: instead of a draw call per triangle,
 every triangle is transformed on the CPU into one shared vertex buffer in linear
@@ -31,11 +33,12 @@ is enabled at startup.
 
 The PICA200 vertex shader lives in `src/vshader.pica` and is compiled at build
 time by `citro3d`'s `include_shader!` macro (which shells out to devkitPro's
-`picasso`). `bevy_ecs` and `bevy_math` are both core-only
-(`default-features = false`, `features = ["std"]` — no `bevy_reflect`, no `rand`,
-no `curve`) — see `crates/bevy-ecs-check` for why that works on the 3DS.
-`bevy_math` pulls its own `glam` 0.32 alongside `citro3d`'s `glam` 0.30; the two
-coexist and we only touch `bevy_math`'s.
+`picasso`). `bevy_ecs`, `bevy_math` and `bevy_color` are all
+`default-features = false, features = ["std"]` — no `bevy_reflect` on any of
+them, no `rand`/`curve` on `bevy_math`, no `serialize` on `bevy_color` — see
+`crates/bevy-ecs-check`/`bevy-math-check`/`bevy-color-check` for why that works
+on the 3DS. `bevy_math` pulls its own `glam` 0.32 alongside `citro3d`'s
+`glam` 0.30; the two coexist and we only touch `bevy_math`'s.
 
 ## Prerequisites
 
@@ -78,9 +81,10 @@ Put any files the app loads at runtime in `romfs/`.
 ## Workspace
 
 - `.` — the `dove` app.
-- `crates/bevy-ecs-check`, `crates/bevy-math-check`, `crates/bevy-transform-check`
-  — standalone probes that pull in one Bevy crate (no `citro3d` in the tree) and
-  run assertion tests on-device to confirm it works on `armv6k-nintendo-3ds`.
+- `crates/bevy-ecs-check`, `crates/bevy-math-check`, `crates/bevy-transform-check`,
+  `crates/bevy-color-check` — standalone probes that pull in one Bevy crate (no
+  `citro3d` in the tree) and run assertion tests on-device to confirm it works on
+  `armv6k-nintendo-3ds`.
 
   ```sh
   cargo 3ds build -p bevy-ecs-check                 # compile + link
@@ -98,10 +102,16 @@ Put any files the app loads at runtime in `romfs/`.
   | `bevy-ecs-check` | `bevy_ecs` (`std`, no reflect/threads) | 0.19.1 | 9/9 checks ✅ |
   | `bevy-math-check` | `bevy_math` + `glam` 0.32 + `rand` (`std`, `curve`, `rand`) | 0.19.1 | 488/488 checks ✅ (≈ whole public API) |
   | `bevy-transform-check` | `bevy_transform` (+`bevy_ecs`/`bevy_app`, `std`, `bevy-support`) | 0.19.1 | 129/129 checks ✅ (whole public API + `App::update()`) |
+  | `bevy-color-check` | `bevy_color` (`std`, no reflect/serialize) | 0.19.1 | 381/381 checks ✅ (every color space + conversion graph) |
+
+  `crates/all-checks` bundles every check crate's `#[test]`s into a **single**
+  on-device test binary (145 test functions / 1007 checks total as of this
+  writing) via `#[path]`, so `./scripts/send-tests.sh all` sends the whole
+  suite as one app instead of one per crate.
 
   Findings, caveats and the full port classification live in `port.md`
   (`bevy_ecs` §"Was verifiziert ist" / §B1–§B2, `bevy_math` §B9, `bevy_transform`
-  §B10).
+  §B10, `bevy_color` §B11).
 
 - `crates/test-console` — an interactive `#![test_runner]` for the 3DS. Build a
   check crate's tests with `--features console` and the **test list appears on
@@ -115,6 +125,7 @@ Put any files the app loads at runtime in `romfs/`.
   ```sh
   ./scripts/send-tests.sh bevy-math-check          # build + 3dslink to a 3DS
   ./scripts/send-tests.sh bevy-transform-check --ip 192.168.2.50
+  ./scripts/send-tests.sh all                      # every check crate, one app
   cargo 3ds test --no-run -p bevy-ecs-check --features console   # just build the .3dsx
   ```
 

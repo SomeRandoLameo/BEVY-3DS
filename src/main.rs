@@ -1,13 +1,16 @@
-//! `dove` — a swarm of RGB triangles simulated by `bevy_ecs` and drawn with
+//! `dove` — a swarm of rainbow triangles simulated by `bevy_ecs` and drawn with
 //! `citro3d`, tuned for throughput.
 //!
-//! Every entity is `(Body, Spin, Pulse)` with `bevy_math` `Vec2` positions. A
-//! `bevy_ecs` `Schedule` of `drift` → `bounce` + `spin` advances them each
-//! frame. The render loop reads the component state back out, transforms every
-//! triangle **on the CPU into one shared vertex buffer** (`Vec2::from_angle` /
-//! `Vec2::rotate` for the spin), and then issues exactly **one draw call per
-//! screen** (3 total) instead of one per triangle — so cost scales with
-//! vertices pushed, not with draw-call overhead.
+//! Every entity is `(Body, Spin, Pulse, Tint)` with `bevy_math` `Vec2`
+//! positions. A `bevy_ecs` `Schedule` of `drift` → `bounce` + `spin` + `tint`
+//! advances them each frame. `tint` spins a `bevy_color::Hsla` hue per entity
+//! (`Hue::rotate_hue`) and bakes it down to `Srgba` corner colours 120° apart
+//! on the colour wheel, so each triangle is a rotating tri-colour swatch instead
+//! of a fixed RGB corner scheme. The render loop reads the component state back
+//! out, transforms every triangle **on the CPU into one shared vertex buffer**
+//! (`Vec2::from_angle` / `Vec2::rotate` for the spin), and then issues exactly
+//! **one draw call per screen** (3 total) instead of one per triangle — so cost
+//! scales with vertices pushed, not with draw-call overhead.
 //!
 //! Controls: **A/B** ±8 triangles · hold **X/Y** ±32 per frame · **SELECT**
 //! reset · **L** toggle the bottom-screen metrics console · **START** exit.
@@ -22,6 +25,7 @@
 #![cfg_attr(all(test, not(feature = "console")), test_runner(test_runner::run_gdb))]
 #![cfg_attr(all(test, feature = "console"), test_runner(test_console::run))]
 
+use bevy_color::{ColorToComponents, Hsla, Hue, Srgba};
 use bevy_ecs::prelude::*;
 use bevy_math::{Vec2, Vec3};
 use citro3d::macros::include_shader;
@@ -54,13 +58,22 @@ struct Vertex {
     color: Vec3,
 }
 
-/// The unit triangle, centred on the origin: `(corner offset, colour)`. The
-/// per-entity rotate/scale/translate is applied on the CPU each frame.
-const BASE: [(Vec2, Vec3); 3] = [
-    (Vec2::new(0.0, 0.45), Vec3::new(1.0, 0.1, 0.1)),
-    (Vec2::new(-0.4, -0.35), Vec3::new(0.1, 1.0, 0.1)),
-    (Vec2::new(0.4, -0.35), Vec3::new(0.1, 0.1, 1.0)),
-];
+/// The unit triangle's three corner offsets, centred on the origin. The
+/// per-entity rotate/scale/translate is applied on the CPU each frame; corner
+/// *colour* comes from `Tint::colors` (see the `tint` system), not from here.
+const BASE: [Vec2; 3] = [Vec2::new(0.0, 0.45), Vec2::new(-0.4, -0.35), Vec2::new(0.4, -0.35)];
+
+/// Corner hues, 120° apart on the wheel — the `bevy_color` replacement for the
+/// old fixed red/green/blue corners. Each triangle's overall hue then spins
+/// around this at `Tint::hue_rate`.
+const CORNER_HUE_OFFSETS: [f32; 3] = [0.0, 120.0, 240.0];
+const SOLID_HUE_OFFSETS: [f32; 3] = [0.0, 0.0, 0.0];
+const TINT_SATURATION: f32 = 0.85;
+const TINT_LIGHTNESS: f32 = 0.6;
+/// Fraction of newly-spawned triangles that get a single flat colour instead
+/// of the rainbow corner split — just for testing/comparing the two side by
+/// side in the running demo.
+const SOLID_FRACTION: f32 = 0.25;
 
 static SHADER_BYTES: &[u8] = include_shader!("vshader.pica");
 const CLEAR_COLOR: u32 = 0x1A_1B_2E_FF;
@@ -96,6 +109,20 @@ struct Pulse {
     phase: f32,
 }
 
+/// A per-entity `bevy_color::Hsla` swatch: `hue` spins at `hue_rate`
+/// degrees/sec, and `colors` are the three corners' `Srgba` baked to `Vec3`
+/// for the vertex buffer — 120° apart on the wheel (see `CORNER_HUE_OFFSETS`),
+/// or all three the same hue when `solid` (a fixed fraction of triangles, just
+/// to eyeball single-colour vs. rainbow triangles side by side — see
+/// `SOLID_FRACTION`).
+#[derive(Component)]
+struct Tint {
+    hue: f32,
+    hue_rate: f32,
+    solid: bool,
+    colors: [Vec3; 3],
+}
+
 /// Simulation clock, advanced once per frame.
 #[derive(Resource)]
 struct SimTime {
@@ -126,6 +153,21 @@ fn bounce(mut bodies: Query<&mut Body>) {
 fn spin(time: Res<SimTime>, mut spins: Query<&mut Spin>) {
     for mut s in &mut spins {
         s.angle += s.rate * time.dt;
+    }
+}
+
+/// Spins each entity's hue and rebakes its three corner colours. `Hue::rotate_hue`
+/// does the wrap-around at 360°; `Srgba::from(Hsla)` + `ColorToComponents::to_vec3`
+/// turn each corner's swatch into the `Vec3` the vertex buffer wants.
+fn tint(time: Res<SimTime>, mut tints: Query<&mut Tint>) {
+    for mut t in &mut tints {
+        let hue = (t.hue + t.hue_rate * time.dt).rem_euclid(360.0);
+        t.hue = hue;
+        let swatch = Hsla::hsl(hue, TINT_SATURATION, TINT_LIGHTNESS);
+        let offsets = if t.solid { SOLID_HUE_OFFSETS } else { CORNER_HUE_OFFSETS };
+        for (color, offset) in t.colors.iter_mut().zip(offsets) {
+            *color = Srgba::from(swatch.rotate_hue(offset)).to_vec3();
+        }
     }
 }
 
@@ -164,6 +206,12 @@ fn spawn_triangle(world: &mut World, rng: &mut Rng) -> Entity {
                 amp: rng.range(0.04, 0.18),
                 freq: rng.range(1.0, 4.0),
                 phase: rng.range(0.0, 6.28),
+            },
+            Tint {
+                hue: rng.range(0.0, 360.0),
+                hue_rate: rng.range(-60.0, 60.0),
+                solid: rng.range(0.0, 1.0) < SOLID_FRACTION,
+                colors: [Vec3::ZERO; 3],
             },
         ))
         .id()
@@ -247,7 +295,7 @@ fn main() {
     resize_swarm(&mut world, &mut rng, &mut triangles, START_TRIANGLES);
 
     let mut schedule = Schedule::default();
-    schedule.add_systems(((drift, bounce).chain(), spin));
+    schedule.add_systems(((drift, bounce).chain(), spin, tint));
 
     // Hold the previous frame's vertex buffer alive until this frame's
     // `C3D_FrameBegin(SYNCDRAW)` has confirmed the GPU is done reading it.
@@ -317,11 +365,11 @@ fn main() {
         let elapsed = world.resource::<SimTime>().elapsed;
         let mut verts: Vec<Vertex, LinearAllocator> =
             Vec::with_capacity_in(triangles.len() * 3, LinearAllocator);
-        let mut query = world.query::<(&Body, &Spin, &Pulse)>();
-        for (body, spin, pulse) in query.iter(&world) {
+        let mut query = world.query::<(&Body, &Spin, &Pulse, &Tint)>();
+        for (body, spin, pulse, tint) in query.iter(&world) {
             let scale = pulse.base + pulse.amp * (elapsed * pulse.freq + pulse.phase).sin();
             let rotation = Vec2::from_angle(spin.angle);
-            for &(offset, color) in &BASE {
+            for (&offset, &color) in BASE.iter().zip(&tint.colors) {
                 let p = rotation.rotate(offset) * scale + body.pos;
                 verts.push(Vertex {
                     pos: Vec3::new(p.x, p.y, SCENE_Z),
@@ -543,5 +591,53 @@ mod tests {
         resize_swarm(&mut world, &mut rng, &mut triangles, 10);
         assert_eq!(triangles.len(), 10);
         assert_eq!(world.query::<&Body>().iter(&world).count(), 10);
+    }
+
+    /// `tint` advances the hue and rebakes all three corner colours from it —
+    /// exercises `bevy_color`'s `Hsla` + `Hue::rotate_hue` + `Srgba` conversion.
+    #[test]
+    fn tint_spins_hue_and_bakes_corner_colors() {
+        let mut world = World::new();
+        world.insert_resource(SimTime { elapsed: 0.0, dt: 1.0 });
+        let e = world
+            .spawn(Tint {
+                hue: 0.0,
+                hue_rate: 90.0,
+                solid: false,
+                colors: [Vec3::ZERO; 3],
+            })
+            .id();
+        let solid_e = world
+            .spawn(Tint {
+                hue: 0.0,
+                hue_rate: 0.0,
+                solid: true,
+                colors: [Vec3::ZERO; 3],
+            })
+            .id();
+
+        let mut schedule = Schedule::default();
+        schedule.add_systems(tint);
+        schedule.run(&mut world);
+
+        let t = world.entity(e).get::<Tint>().unwrap();
+        assert_eq!(t.hue, 90.0);
+        // Corners are still colored (not left at the ZERO placeholder)…
+        assert!(t.colors.iter().all(|c| *c != Vec3::ZERO));
+        // …and the 0°/120°/240° corners are 3 distinct colours.
+        assert_ne!(t.colors[0], t.colors[1]);
+        assert_ne!(t.colors[1], t.colors[2]);
+
+        // A `solid` triangle's three corners all get the same colour.
+        let solid = world.entity(solid_e).get::<Tint>().unwrap();
+        assert_eq!(solid.colors[0], solid.colors[1]);
+        assert_eq!(solid.colors[1], solid.colors[2]);
+
+        // A full 4x90° turn returns to the start hue (wrap via `rem_euclid`).
+        schedule.run(&mut world);
+        schedule.run(&mut world);
+        schedule.run(&mut world);
+        let t = world.entity(e).get::<Tint>().unwrap();
+        assert_eq!(t.hue, 0.0);
     }
 }

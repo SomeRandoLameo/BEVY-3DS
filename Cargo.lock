@@ -16,6 +16,7 @@ name = "all-checks"
 version = "0.1.0"
 dependencies = [
  "bevy_app",
+ "bevy_color",
  "bevy_ecs",
  "bevy_math",
  "bevy_transform",
@@ -103,6 +104,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
+name = "bevy-color-check"
+version = "0.1.0"
+dependencies = [
+ "bevy_color",
+ "bevy_math",
+ "test-console",
+ "test-runner",
+]
+
+[[package]]
 name = "bevy-ecs-check"
 version = "0.1.0"
 dependencies = [
@@ -150,6 +161,21 @@ dependencies = [
  "log",
  "thiserror",
  "variadics_please",
+]
+
+[[package]]
+name = "bevy_color"
+version = "0.19.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e5370beae13bea2db64744f370bb33566aa770dff91c2beae245ce82217fbbc"
+dependencies = [
+ "bevy_math",
+ "bevy_reflect",
+ "bytemuck",
+ "derive_more",
+ "serde",
+ "thiserror",
+ "wgpu-types",
 ]
 
 [[package]]
@@ -644,6 +670,7 @@ dependencies = [
 name = "dove"
 version = "0.1.0"
 dependencies = [
+ "bevy_color",
  "bevy_ecs",
  "bevy_math",
  "citro3d",

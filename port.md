@@ -8,7 +8,7 @@
 | bevy_platform | Sicher (mit Fallbacks) | **ist** die Platform-Abstraktion: Atomic-Shim (64-bit → `portable-atomic` Fallback), `Instant`, sync-Primitive. Baut für 3DS. | ✅ baut (transitiv) |
 | bevy_derive | Sicher | Makros, keine Runtime-Abhängigkeit ||
 | bevy_macro_utils | Sicher | Makros, keine Runtime-Abhängigkeit ||
-| bevy_color | Sicher | reine Farbraum-Mathe ||
+| bevy_color | Sicher | reine Farbraum-Mathe | ✅ **381/381 Checks** (44 Testfn, Emu, `crates/bevy-color-check`) — jeder Farbraum + Konversionsgraph. Liste → `crates/bevy-color-check/README.md`, Überblick §B11. Auch **im Demo verbaut** (`Tint`/`Hue::rotate_hue`, Emu-verifiziert, s. u.) |
 | bevy_time | Wahrscheinlich okay | Baut (`bevy_platform::Instant` → `std::time::Instant`). Ob `Instant::now()` auf **3DS-Hardware** liefert, ist UNGEPRÜFT — im Demo bewusst mit `svcGetSystemTick` umgangen (§B6). | Instant auf HW ✗ |
 | bevy_app | Wahrscheinlich okay | Runner passt nicht, `App::update()` manuell nötig. `App::new().add_plugins(...)` + **`app.update()` läuft auf dem 3DS** (via `bevy-transform-check` §B10). Eigener `bevy-app-check` noch offen (SubApps, Plugin-Ordering, `AppExit`). | ✅ `update()` (Emu) |
 | bevy_state | Wahrscheinlich okay | reine State-Machine-Logik ||
@@ -44,12 +44,13 @@
 
 ---
 
-## Befunde (Stand 2026-09-10, Bevy 0.19.1, `armv6k-nintendo-3ds`)
+## Befunde (Stand 2026-09-11, Bevy 0.19.1, `armv6k-nintendo-3ds`)
 
 ### Was tatsächlich verifiziert ist
 
-Kompiliert **+ gelinkt + auf echter 3DS-Hardware gelaufen** (Swarm-Demo `src/main.rs`)
-sowie mit Assertions im Emulator (`./scripts/test-emulator.sh`):
+Kompiliert **+ gelinkt + auf echter 3DS-Hardware gelaufen** (Swarm-Demo `src/main.rs`,
+Stand vor der `bevy_color`/`Tint`-Erweiterung — die ist bisher nur Emulator-verifiziert,
+s. u.) sowie mit Assertions im Emulator (`./scripts/test-emulator.sh`):
 
 - `bevy_ecs` 0.19.1, `default-features = false, features = ["std"]`:
   `World`, `spawn`/`despawn`, `Query<&T>` **und** `Query<&mut T>` (Iteration + Mutation),
@@ -66,13 +67,24 @@ sowie mit Assertions im Emulator (`./scripts/test-emulator.sh`):
   ist damit für `bevy_transform` entschärft.
 - `bevy_app` 0.19.1: `App::new()` + `add_plugins` + **`app.update()` propagiert korrekt** —
   via `bevy-transform-check` §B10. `bevy_ecs::system::RunSystemOnce` funktioniert ebenfalls.
+- `bevy_color` 0.19.1, `default-features = false, features = ["std"]`:
+  **381 Assertion-Checks** (44 Testfunktionen) im Emulator — jeder Farbraum
+  (`Srgba`/`LinearRgba`/`Hsla`/`Hsva`/`Hwba`/`Laba`/`Lcha`/`Oklaba`/`Oklcha`/`Xyza`),
+  der `Color`-Enum, `ColorCurve`, die Paletten und der komplette Konversionsgraph.
+  Siehe §B11 / `crates/bevy-color-check/README.md`. **Im Demo verbaut:** jedes
+  Dreieck ist jetzt `(Body, Spin, Pulse, Tint)` — `Tint` dreht eine `Hsla`-Hue
+  (`Hue::rotate_hue`) und bäckt sie über `Srgba` zu den drei Eck-`Vec3`-Farben,
+  120° auf dem Farbrad auseinander (Emu-verifiziert inkl. `cargo 3ds test`;
+  noch nicht auf echter Hardware nachgezogen).
 - Transitiv mitgebaut **+ gelinkt** (nicht separat funktionsgetestet):
   `bevy_platform`, `bevy_ptr`, `bevy_utils`, `bevy_tasks` (single-threaded), `bevy_ecs_macros`,
   `bevy_derive`, `glam` 0.32.
 
 Vehikel für weitere isolierte Tests: **`crates/bevy-ecs-check`**,
-**`crates/bevy-math-check`**, **`crates/bevy-transform-check`** (jeweils ohne
-citro3d im Baum, on-device via `./scripts/test-emulator.sh -p <crate>`).
+**`crates/bevy-math-check`**, **`crates/bevy-transform-check`**,
+**`crates/bevy-color-check`** (jeweils ohne citro3d im Baum, on-device via
+`./scripts/test-emulator.sh -p <crate>`; `crates/all-checks` bündelt alle vier
+in eine `.3dsx`).
 
 ### Plattform-Fakten `armv6k-nintendo-3ds`
 
@@ -217,12 +229,49 @@ Abgedeckt (die gesamte öffentliche API):
 - **Nicht abgedeckt:** `multi_threaded`-Propagation (paralleler Pfad — der harte §B2-Block),
   sehr breite Hierarchien, `TransformPlugin` mit anderen Plugins kombiniert.
 
+**§B11 — bevy_color: Testergebnis (`crates/bevy-color-check`).**
+`bevy_color` 0.19.1, Features `["std"]` (= `alloc` + `bevy_math/std`, **kein**
+`bevy_reflect`, **kein** `serialize`, **kein** `wgpu-types`). Lauf:
+`./scripts/test-emulator.sh -p bevy-color-check`.
+**44 / 44 Testfunktionen · 381 / 381 Checks bestanden**, ε = 1e-4 (gleicher Raum) /
+4e-3 (über eine Farbraum-Konversion — mehrere `cbrt`/`powf`/Trig-Aufrufe aus
+devkitPro-newlib verkettet, s. Crate-README).
+
+→ **Vollständige Liste** (jede Funktion · Eingabe · Erwartet · **tatsächliche Ausgabe** · OK,
+44 Sektionen): **`crates/bevy-color-check/README.md`**.
+
+Abgedeckt (die gesamte öffentliche API):
+
+| Bereich | Umfang |
+|---|---|
+| `Srgba` | Konstanten, Konstruktoren, `hex`/`to_hex` (alle Längen + Fehlerpfade), `gamma_function`/`_inverse`, `Mix`/`Alpha`/`Luminance`/`Gray`/`EuclideanDistance`, `ColorToComponents`/`ColorToPacked`, componentwise Vektor-Ops, `StableInterpolate` |
+| `LinearRgba` | Konstanten (inkl. `NAN`), CIE-Luminanz-Gewichte, `with_luminance`/`darker`/`lighter`, `as_u32`/`to_u8_array` (+ Clamping), Vektor-Ops |
+| `Hsla`/`Hsva`/`Hwba` | `Hue`/`Saturation`-Traits, `Mix` mit kürzestem Hue-Pfad, `Luminance`, `Gray`, `sequential_dispersed`, paarweise Konversionen |
+| `Laba`/`Lcha`/`Oklaba`/`Oklcha`/`Xyza` | Konstruktoren, `CIE_EPSILON`/`CIE_KAPPA`, `D65_WHITE`, `Luminance`, `EuclideanDistance`, `Hue`, `Gray`, `sequential_dispersed` |
+| Konversionsgraph | 6 Testfarben (schwarz/weiß/rot/grün/blau/grau, aus `bevy_color`s eigener `test_colors`-Tabelle) durch **alle 8 Räume** → `LinearRgba` und zurück |
+| `Color` (Enum) | alle 10 Konstruktoren, `WHITE`/`BLACK`/`NONE`/`Default`, `to_srgba`/`to_linear`, `From<konkreter Typ>` (`derive_more`), `Alpha`/`Luminance`/`Hue`/`Saturation`/`Mix` (Delegation über `Oklcha`), `TryStableInterpolate` inkl. Mismatch-Fehler |
+| `color_ops`/`color_range` | `Alpha for f32`, `Gray::gray` generisch über alle 10 Typen, `ColorRange::at` |
+| `ColorCurve` | `new` (Fehlerpfad), `domain`, `sample_clamped`, `Curve::sample`, `CurveExt::map` |
+| `palettes` | Stichproben aus `basic`/`css`/`tailwind` |
+| Layout | `size_of`/`align_of` jedes Farbtyps + `Color` |
+
+- **Konversionsgraph vollständig durchlaufen:** alle `From`-Impls zwischen den 8
+  Nicht-Enum-Räumen (direkt oder über eine Zwischenstufe wie `Hsva`/`Oklaba`)
+  wurden mit realen Testfarben gegengeprüft, nicht nur einzeln kompiliert.
+- **`ColorCurve`** (das `bevy_math::curve::Curve`-Interface für Farbverläufe,
+  `EvenCore`/`Vec`-basiert) braucht `alloc` — läuft mit `features = ["std"]`.
+- **Nicht abgedeckt:** `bevy_reflect`, `serialize` (serde), `wgpu-types`-Interop,
+  `encase`/`ShaderType` (nur `LinearRgba`, GPU-Uniform-Pfad), die vollständigen
+  `css`/`tailwind`-Palettentabellen (nur Stichproben — reine Daten).
+
 ### Erledigt
 
 - ✅ `bevy_math` inkl. `rand`/`sampling` — §B9 (`bevy-math-check`, 488/488 Checks, quasi ganze API)
 - ✅ `bevy_transform` — ganze öffentliche API inkl. `TransformPlugin`/`App::update()` — §B10 (`bevy-transform-check`, 129/129 Checks)
 - ✅ `bevy_ecs` core single-threaded — §"Was verifiziert ist"
 - ✅ `bevy_app` — kompiliert, linkt **und `App::update()` läuft** (via bevy-transform-check §B10)
+- ✅ `bevy_color` — gesamte öffentliche API + Konversionsgraph — §B11 (`bevy-color-check`,
+  381/381 Checks) — und im Demo verbaut (`Tint`)
 
 ### Empfohlene nächste Schritte (on-device via ein `bevy-*-check`)
 

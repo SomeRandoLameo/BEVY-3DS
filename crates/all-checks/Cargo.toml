@@ -15,8 +15,9 @@ publish = false
 #   ./scripts/send-tests.sh all           # interactive runner -> hardware
 #   ./scripts/test-emulator.sh -p all-checks   # GDB runner -> emulator
 [dependencies]
-# union of bevy-math-check ("std","curve","rand"), bevy-transform-check ("std"),
-# bevy-ecs-check ("std")
+# union of bevy-color-check ("std"), bevy-math-check ("std","curve","rand"),
+# bevy-transform-check ("std"), bevy-ecs-check ("std")
+bevy_color = { version = "0.19", default-features = false, features = ["std"] }
 bevy_math = { version = "0.19", default-features = false, features = ["std", "curve", "rand"] }
 bevy_ecs = { version = "0.19", default-features = false, features = ["std"] }
 # `bevy-support` pulls bevy_ecs + bevy_app for bevy_transform's `systems` module.

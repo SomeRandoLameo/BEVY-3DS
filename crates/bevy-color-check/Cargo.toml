@@ -1,0 +1,29 @@
+[package]
+name = "bevy-color-check"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Standalone probe: does `bevy_color` — plain color-space math, no rendering —
+# work correctly on `armv6k-nintendo-3ds`? Every color space + its conversions,
+# the color-op traits, `Color`, `ColorCurve`, and the named palettes.
+#
+#   cargo 3ds build -p bevy-color-check
+#   ./scripts/test-emulator.sh -p bevy-color-check
+[dependencies]
+# `std` (= `alloc` + `bevy_math/std`) for `Srgba::to_hex` and `ColorCurve`
+# (EvenCore is Vec-backed). No `bevy_reflect`, no `serialize`, no `wgpu-types`.
+bevy_color = { version = "0.19", default-features = false, features = ["std"] }
+bevy_math = { version = "0.19", default-features = false, features = ["std"] }
+
+[features]
+# `--features console` swaps the GDB test runner for the interactive
+# bottom-screen menu runner (`test-console`). Tests are unchanged either way.
+console = []
+
+[dev-dependencies]
+# GDB-backed test harness so `cargo 3ds test -p bevy-color-check` runs on
+# emulator / hardware. See ../../scripts/test-emulator.sh.
+test-runner = { git = "https://github.com/rust3ds/ctru-rs" }
+# Interactive on-device runner (used with `--features console`).
+test-console = { path = "../test-console" }

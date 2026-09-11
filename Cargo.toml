@@ -4,6 +4,7 @@ members = [
     "crates/bevy-ecs-check",
     "crates/bevy-math-check",
     "crates/bevy-transform-check",
+    "crates/bevy-color-check",
     "crates/all-checks",
 ]
 resolver = "3"
@@ -21,6 +22,8 @@ citro3d = { git = "https://github.com/rust3ds/citro3d-rs" }
 bevy_ecs = { version = "0.19", default-features = false, features = ["std"] }
 # glam-based vector/matrix math (Vec2/Vec3/…). No `rand`/`curve`/`bevy_reflect`.
 bevy_math = { version = "0.19", default-features = false, features = ["std"] }
+# HSL hue-cycling per triangle — see crates/bevy-color-check. No `bevy_reflect`.
+bevy_color = { version = "0.19", default-features = false, features = ["std"] }
 
 # Optimise even the debug `.3dsx` a bit — an unoptimised bevy_ecs + f32 render
 # loop is painfully slow on ARM11.

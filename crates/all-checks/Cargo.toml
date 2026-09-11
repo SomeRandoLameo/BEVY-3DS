@@ -16,13 +16,16 @@ publish = false
 #   ./scripts/test-emulator.sh -p all-checks   # GDB runner -> emulator
 [dependencies]
 # union of bevy-color-check ("std"), bevy-math-check ("std","curve","rand"),
-# bevy-transform-check ("std"), bevy-ecs-check ("std")
+# bevy-transform-check ("std"), bevy-ecs-check ("std"), bevy-time-check ("std")
 bevy_color = { version = "0.19", default-features = false, features = ["std"] }
 bevy_math = { version = "0.19", default-features = false, features = ["std", "curve", "rand"] }
 bevy_ecs = { version = "0.19", default-features = false, features = ["std"] }
 # `bevy-support` pulls bevy_ecs + bevy_app for bevy_transform's `systems` module.
 bevy_transform = { version = "0.19", default-features = false, features = ["std", "bevy-support"] }
 bevy_app = { version = "0.19", default-features = false, features = ["std"] }
+bevy_time = { version = "0.19", default-features = false, features = ["std"] }
+# For `checks::plugin`'s `TimeUpdateStrategy::ManualInstant` check.
+bevy_platform = { version = "0.19", default-features = false, features = ["std"] }
 
 [features]
 # `--features console` swaps the GDB test runner for the interactive

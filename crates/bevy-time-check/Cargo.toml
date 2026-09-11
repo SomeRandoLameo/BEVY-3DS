@@ -1,0 +1,33 @@
+[package]
+name = "bevy-time-check"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Standalone probe: does `bevy_time` — clocks, `Timer`/`Stopwatch`, fixed
+# timestep, run conditions, delayed commands, `TimePlugin` — work on
+# `armv6k-nintendo-3ds`? Deterministic throughout (`TimeUpdateStrategy` /
+# `advance_by`), so it never touches real wall-clock time — whether
+# `Instant::now()` behaves on real 3DS *hardware* is a separate, still-open
+# question (see README "Nicht abgedeckt" / port.md §B6).
+#
+#   cargo 3ds build -p bevy-time-check
+#   ./scripts/test-emulator.sh -p bevy-time-check
+[dependencies]
+bevy_time = { version = "0.19", default-features = false, features = ["std"] }
+bevy_app = { version = "0.19", default-features = false, features = ["std"] }
+bevy_ecs = { version = "0.19", default-features = false, features = ["std"] }
+# For the single `Instant::now()` monotonicity sanity check (checks::real_time).
+bevy_platform = { version = "0.19", default-features = false, features = ["std"] }
+
+[features]
+# `--features console` swaps the GDB test runner for the interactive
+# bottom-screen menu runner (`test-console`). Tests are unchanged either way.
+console = []
+
+[dev-dependencies]
+# GDB-backed test harness so `cargo 3ds test -p bevy-time-check` runs on
+# emulator / hardware. See ../../scripts/test-emulator.sh.
+test-runner = { git = "https://github.com/rust3ds/ctru-rs" }
+# Interactive on-device runner (used with `--features console`).
+test-console = { path = "../test-console" }

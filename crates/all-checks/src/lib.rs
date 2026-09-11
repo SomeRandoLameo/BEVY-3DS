@@ -27,5 +27,9 @@ mod bevy_ecs_check;
 mod bevy_math_check;
 
 #[cfg(test)]
+#[path = "../../bevy-time-check/src/checks/mod.rs"]
+mod bevy_time_check;
+
+#[cfg(test)]
 #[path = "../../bevy-transform-check/src/checks/mod.rs"]
 mod bevy_transform_check;

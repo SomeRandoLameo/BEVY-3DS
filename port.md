@@ -9,7 +9,7 @@
 | bevy_derive | Sicher | Makros, keine Runtime-Abhängigkeit ||
 | bevy_macro_utils | Sicher | Makros, keine Runtime-Abhängigkeit ||
 | bevy_color | Sicher | reine Farbraum-Mathe | ✅ **381/381 Checks** (44 Testfn, Emu, `crates/bevy-color-check`) — jeder Farbraum + Konversionsgraph. Liste → `crates/bevy-color-check/README.md`, Überblick §B11. Auch **im Demo verbaut** (`Tint`/`Hue::rotate_hue`, Emu-verifiziert, s. u.) |
-| bevy_time | Wahrscheinlich okay | Baut (`bevy_platform::Instant` → `std::time::Instant`). Ob `Instant::now()` auf **3DS-Hardware** liefert, ist UNGEPRÜFT — im Demo bewusst mit `svcGetSystemTick` umgangen (§B6). | Instant auf HW ✗ |
+| bevy_time | Sicher (deterministischer Kern) | Baut, `App::update()` mit `TimePlugin` läuft. `bevy_platform::Instant` → `std::time::Instant`. Ob `Instant::now()` auf **3DS-Hardware** akkurat/monoton liefert, ist weiterhin UNGEPRÜFT — im Demo bewusst nur der deterministische `Time::advance_by`-Pfad genutzt, nicht `TimePlugin`/`Instant::now()` (die FPS-Anzeige nutzt weiterhin direkt `svcGetSystemTick`, §B6). | ✅ **161/161 Checks** (47 Testfn, Emu, `crates/bevy-time-check`) — gesamte öffentliche API, komplett deterministisch (`TimeUpdateStrategy`/`advance_by`, keine echte Wanduhr außer einem einzelnen `Instant::now()`-Sanity-Check). Liste → `crates/bevy-time-check/README.md`, Überblick §B12. **Im Demo verbaut:** `Time::advance_by(DT)` als Sim-Uhr (ersetzt das handgerollte `SimTime`), Emu-verifiziert. `Instant` auf HW weiterhin ✗ |
 | bevy_app | Wahrscheinlich okay | Runner passt nicht, `App::update()` manuell nötig. `App::new().add_plugins(...)` + **`app.update()` läuft auf dem 3DS** (via `bevy-transform-check` §B10). Eigener `bevy-app-check` noch offen (SubApps, Plugin-Ordering, `AppExit`). | ✅ `update()` (Emu) |
 | bevy_state | Wahrscheinlich okay | reine State-Machine-Logik ||
 | bevy_diagnostic | Wahrscheinlich okay | evtl. OS-Metriken disablen ||
@@ -49,8 +49,9 @@
 ### Was tatsächlich verifiziert ist
 
 Kompiliert **+ gelinkt + auf echter 3DS-Hardware gelaufen** (Swarm-Demo `src/main.rs`,
-Stand vor der `bevy_color`/`Tint`-Erweiterung — die ist bisher nur Emulator-verifiziert,
-s. u.) sowie mit Assertions im Emulator (`./scripts/test-emulator.sh`):
+Stand vor der `bevy_color`/`Tint`- und `bevy_time`/`Time`-Erweiterung — beide
+sind bisher nur Emulator-verifiziert, s. u.) sowie mit Assertions im Emulator
+(`./scripts/test-emulator.sh`):
 
 - `bevy_ecs` 0.19.1, `default-features = false, features = ["std"]`:
   `World`, `spawn`/`despawn`, `Query<&T>` **und** `Query<&mut T>` (Iteration + Mutation),
@@ -76,15 +77,29 @@ s. u.) sowie mit Assertions im Emulator (`./scripts/test-emulator.sh`):
   (`Hue::rotate_hue`) und bäckt sie über `Srgba` zu den drei Eck-`Vec3`-Farben,
   120° auf dem Farbrad auseinander (Emu-verifiziert inkl. `cargo 3ds test`;
   noch nicht auf echter Hardware nachgezogen).
+- `bevy_time` 0.19.1, `default-features = false, features = ["std"]`:
+  **161 Assertion-Checks** (47 Testfunktionen) im Emulator — die gesamte
+  öffentliche API (`Stopwatch`, `Timer`, `Time<Real/Virtual/Fixed>`,
+  `common_conditions`, `DelayedCommandsExt`, `TimePlugin`), komplett
+  deterministisch über `TimeUpdateStrategy`/`advance_by` statt der echten
+  Wanduhr. Siehe §B12 / `crates/bevy-time-check/README.md`. **Im Demo
+  verbaut:** die Sim-Uhr in `src/main.rs` ist jetzt `bevy_time::Time`
+  (`Res<Time>` in `drift`/`spin`/`tint`), per festem `Time::advance_by(DT)`
+  getrieben — ersetzt das handgerollte `SimTime`, ohne `TimePlugin`/
+  `Instant::now()` anzufassen (Emu-verifiziert; die FPS-Anzeige bleibt bei
+  `svcGetSystemTick`). **Nicht beantwortet:** ob `Instant::now()` auf echter
+  3DS-Hardware eine brauchbare/monotone Auflösung liefert (§B6 bleibt offen;
+  nur ein einzelner Monotonie-Sanity-Check lief im Emulator).
 - Transitiv mitgebaut **+ gelinkt** (nicht separat funktionsgetestet):
   `bevy_platform`, `bevy_ptr`, `bevy_utils`, `bevy_tasks` (single-threaded), `bevy_ecs_macros`,
-  `bevy_derive`, `glam` 0.32.
+  `bevy_derive`, `glam` 0.32, `crossbeam-channel` (via `bevy_time`'s `std`-Feature).
 
 Vehikel für weitere isolierte Tests: **`crates/bevy-ecs-check`**,
 **`crates/bevy-math-check`**, **`crates/bevy-transform-check`**,
-**`crates/bevy-color-check`** (jeweils ohne citro3d im Baum, on-device via
-`./scripts/test-emulator.sh -p <crate>`; `crates/all-checks` bündelt alle vier
-in eine `.3dsx`).
+**`crates/bevy-color-check`**, **`crates/bevy-time-check`** (jeweils ohne
+citro3d im Baum, on-device via `./scripts/test-emulator.sh -p <crate>`;
+`crates/all-checks` bündelt alle fünf in eine `.3dsx`, 192 Testfunktionen /
+1168 Checks insgesamt).
 
 ### Plattform-Fakten `armv6k-nintendo-3ds`
 
@@ -264,6 +279,58 @@ Abgedeckt (die gesamte öffentliche API):
   `encase`/`ShaderType` (nur `LinearRgba`, GPU-Uniform-Pfad), die vollständigen
   `css`/`tailwind`-Palettentabellen (nur Stichproben — reine Daten).
 
+**§B12 — bevy_time: Testergebnis (`crates/bevy-time-check`).**
+`bevy_time` 0.19.1, Features `["std"]` (**kein** `bevy_reflect`, **kein**
+`serialize`; zieht `bevy_app`/`bevy_ecs`/`bevy_platform` mit `std` + optional
+`crossbeam-channel` für den Render-Welt-Zeitkanal). Lauf:
+`./scripts/test-emulator.sh -p bevy-time-check`.
+**47 / 47 Testfunktionen · 161 / 161 Checks bestanden** (+ 1 `#[should_panic]`-
+Test ohne Tabellenzeile), exakte `Duration`-Vergleiche / ε=1e-4 für f32.
+
+→ **Vollständige Liste** (jede Funktion · Eingabe · Erwartet · **tatsächliche Ausgabe** · OK,
+46 Sektionen): **`crates/bevy-time-check/README.md`**.
+
+Abgedeckt (die gesamte öffentliche API):
+
+| Bereich | Umfang |
+|---|---|
+| `Stopwatch` | `tick`/`pause`/`unpause`/`reset` (inkl. „reset behält Pause-Status"), `set_elapsed`, alle `elapsed*`-Varianten |
+| `Timer`/`TimerMode` | `tick` (Once klemmt, Repeating wickelt um), `is_finished`/`just_finished`, `times_finished_this_tick` (Mehrfach-Trigger pro Tick), `fraction`/`fraction_remaining`/`remaining*`, `finish`/`almost_finish`, `mode`/`set_mode` |
+| `Time<T>` (generisch) | `advance_by` (ersetzt `delta`, akkumuliert `elapsed`), `advance_to` (+ Panic-Pfad bei Rückwärtslauf), `wrap_period`/`elapsed_wrapped`, `context`/`context_mut`/`as_generic` |
+| `Time<Real>` | `update_with_duration` (deterministisch), `startup`/`first_update`/`last_update`, ein `Instant::now()`-Monotonie-Sanity-Check |
+| `Time<Virtual>` | über die öffentliche `update_virtual_time()` — Folgeverhalten bei 1x, `pause`/`unpause`/`toggle`, `set_relative_speed`, `from_max_delta`/`set_max_delta`-Klemmung |
+| `Time<Fixed>` | Konstruktoren/Setter, `overstep`-Buchhaltung, `run_fixed_main_schedule` End-to-End über eine echte `App` (Lauf-Anzahl über 5 Frames nachgerechnet) |
+| `common_conditions` | `on_timer`, `once_after_delay`, `repeating_after_delay` (Semantik-Falle dokumentiert, s. u.), `on_real_timer`, `paused` |
+| `DelayedCommandsExt` | `.duration()`/`.secs()`, Mehrfach-Frame-Spawns End-to-End über `App`+`TimePlugin`, Entity-Id einer verzögerten Aktion sofort für eine zweite nutzbar |
+| `TimePlugin` | alle vier Uhr-Ressourcen inserted; alle 4 `TimeUpdateStrategy`-Varianten unter echter `App` |
+| Layout | `size_of`/`align_of` jedes Uhr-/Timer-Typs |
+
+- **Vollständig deterministisch.** Jeder Test treibt die Uhr über
+  `Time::advance_by`/`advance_to`, `Time::<Real>::update_with_duration` oder
+  `TimeUpdateStrategy::ManualDuration`/`ManualInstant`/`FixedTimesteps` — nie
+  über die echte Wanduhr. Das umgeht die eigentliche offene Frage komplett,
+  statt sie zu beantworten.
+- **`common_conditions::repeating_after_delay`-Falle gefunden:** trotz des
+  Namens wickelt es keinen `Repeating`-Timer, sondern einen `Once`-Timer und
+  liest `is_finished()` (nicht `just_finished()`) — die Bedingung wird nach
+  der Verzögerung **dauerhaft wahr**, nicht periodisch. Für "alle N Sekunden"
+  ist `on_timer` das richtige Werkzeug.
+- **`Time::<Real>::update_with_duration`/`update_with_instant`:** der
+  *erste* Aufruf liefert immer `delta = ZERO` (er etabliert nur
+  `first_update`/`last_update`) — relevant für jeden Test, der `TimePlugin` +
+  `TimeUpdateStrategy::ManualDuration` nutzt (erster `app.update()` "verpufft").
+- **Nicht beantwortet:** ob `Instant::now()` auf echter 3DS-**Hardware**
+  akkurat/monoton ist — nur ein einzelner Monotonie-Check lief im Emulator
+  (siehe `crates/bevy-time-check/README.md` „Determinismus-Hinweis"). §B6
+  bleibt offen. **Im Demo verbaut** (2026-09-11): die Sim-Uhr in `src/main.rs`
+  ist jetzt `bevy_time::Time`, aber weiterhin per festem `Time::advance_by(DT)`
+  getrieben statt über `TimePlugin`/`Instant::now()` — die FPS-Anzeige nutzt
+  nach wie vor direkt `svcGetSystemTick`, gerade um die offene Frage nicht
+  anzufassen.
+- **Nicht abgedeckt:** `bevy_reflect`, `serialize`, `TimeReceiver`/`TimeSender`
+  (Render-Welt-Kanal, ohne `bevy_render` irrelevant), Zeitverhalten von
+  `TimeUpdateStrategy::Automatic` unter echter Last.
+
 ### Erledigt
 
 - ✅ `bevy_math` inkl. `rand`/`sampling` — §B9 (`bevy-math-check`, 488/488 Checks, quasi ganze API)
@@ -272,6 +339,8 @@ Abgedeckt (die gesamte öffentliche API):
 - ✅ `bevy_app` — kompiliert, linkt **und `App::update()` läuft** (via bevy-transform-check §B10)
 - ✅ `bevy_color` — gesamte öffentliche API + Konversionsgraph — §B11 (`bevy-color-check`,
   381/381 Checks) — und im Demo verbaut (`Tint`)
+- ✅ `bevy_time` — gesamte öffentliche API, deterministisch — §B12 (`bevy-time-check`,
+  161/161 Checks). `Instant::now()` auf Hardware bleibt offen (s. Schritt 7)
 
 ### Empfohlene nächste Schritte (on-device via ein `bevy-*-check`)
 

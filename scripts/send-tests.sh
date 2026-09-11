@@ -15,7 +15,7 @@
 #   ./scripts/send-tests.sh all            # every check crate in one app
 #
 # Crates: dove, bevy-ecs-check, bevy-math-check, bevy-transform-check,
-#   bevy-color-check, all-checks.
+#   bevy-color-check, bevy-time-check, all-checks.
 #   "all" is an alias for "all-checks" — the aggregate crate that bundles every
 #   bevy-*-check crate's #[test]s into a single test .3dsx.
 # Default IP: $DOVE_3DS_IP, else 192.168.2.181.

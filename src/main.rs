@@ -2,8 +2,12 @@
 //! `citro3d`, tuned for throughput.
 //!
 //! Every entity is `(Body, Spin, Pulse, Tint)` with `bevy_math` `Vec2`
-//! positions. A `bevy_ecs` `Schedule` of `drift` → `bounce` + `spin` + `tint`
-//! advances them each frame. `tint` spins a `bevy_color::Hsla` hue per entity
+//! positions. The sim clock is a `bevy_time::Time` resource, advanced each
+//! frame by a fixed `Time::advance_by(DT)` — deliberately **not**
+//! `Instant::now()`-driven, since whether that's accurate on real 3DS
+//! hardware is still unverified (see `crates/bevy-time-check`). A `bevy_ecs`
+//! `Schedule` of `drift` → `bounce` + `spin` + `tint` reads `Res<Time>` each
+//! frame to advance them. `tint` spins a `bevy_color::Hsla` hue per entity
 //! (`Hue::rotate_hue`) and bakes it down to `Srgba` corner colours 120° apart
 //! on the colour wheel, so each triangle is a rotating tri-colour swatch instead
 //! of a fixed RGB corner scheme. The render loop reads the component state back
@@ -28,10 +32,12 @@
 use bevy_color::{ColorToComponents, Hsla, Hue, Srgba};
 use bevy_ecs::prelude::*;
 use bevy_math::{Vec2, Vec3};
+use bevy_time::Time;
 use citro3d::macros::include_shader;
 use citro3d::math::{AspectRatio, ClipPlanes, Matrix4, Projection, StereoDisplacement};
 use citro3d::render::{ClearFlags, Frame, ScreenTarget, Target};
 use citro3d::{attrib, buffer, shader, texenv};
+use core::time::Duration;
 use ctru::console::Console;
 use ctru::linear::LinearAllocator;
 use ctru::prelude::*;
@@ -123,16 +129,15 @@ struct Tint {
     colors: [Vec3; 3],
 }
 
-/// Simulation clock, advanced once per frame.
-#[derive(Resource)]
-struct SimTime {
-    elapsed: f32,
-    dt: f32,
-}
+/// Fixed per-frame timestep fed to `Time::advance_by` — the swarm always sims
+/// at a steady 60Hz regardless of actual frame pacing (matches the old
+/// hand-rolled `SimTime`). Deliberately not `Instant::now()`-driven; see the
+/// module docs.
+const DT: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
-fn drift(time: Res<SimTime>, mut bodies: Query<&mut Body>) {
+fn drift(time: Res<Time>, mut bodies: Query<&mut Body>) {
     for mut b in &mut bodies {
-        let step = b.vel * time.dt;
+        let step = b.vel * time.delta_secs();
         b.pos += step;
     }
 }
@@ -150,18 +155,18 @@ fn bounce(mut bodies: Query<&mut Body>) {
     }
 }
 
-fn spin(time: Res<SimTime>, mut spins: Query<&mut Spin>) {
+fn spin(time: Res<Time>, mut spins: Query<&mut Spin>) {
     for mut s in &mut spins {
-        s.angle += s.rate * time.dt;
+        s.angle += s.rate * time.delta_secs();
     }
 }
 
 /// Spins each entity's hue and rebakes its three corner colours. `Hue::rotate_hue`
 /// does the wrap-around at 360°; `Srgba::from(Hsla)` + `ColorToComponents::to_vec3`
 /// turn each corner's swatch into the `Vec3` the vertex buffer wants.
-fn tint(time: Res<SimTime>, mut tints: Query<&mut Tint>) {
+fn tint(time: Res<Time>, mut tints: Query<&mut Tint>) {
     for mut t in &mut tints {
-        let hue = (t.hue + t.hue_rate * time.dt).rem_euclid(360.0);
+        let hue = (t.hue + t.hue_rate * time.delta_secs()).rem_euclid(360.0);
         t.hue = hue;
         let swatch = Hsla::hsl(hue, TINT_SATURATION, TINT_LIGHTNESS);
         let offsets = if t.solid { SOLID_HUE_OFFSETS } else { CORNER_HUE_OFFSETS };
@@ -285,10 +290,7 @@ fn main() {
 
     // --- ECS world ---
     let mut world = World::new();
-    world.insert_resource(SimTime {
-        elapsed: 0.0,
-        dt: 1.0 / 60.0,
-    });
+    world.insert_resource(Time::<()>::default());
 
     let mut rng = Rng(0x9E37_79B9);
     let mut triangles: Vec<Entity> = Vec::with_capacity(MAX_TRIANGLES);
@@ -354,15 +356,12 @@ fn main() {
             resize_swarm(&mut world, &mut rng, &mut triangles, target_count);
         }
 
-        // Advance the simulation.
-        {
-            let mut time = world.resource_mut::<SimTime>();
-            time.elapsed += time.dt;
-        }
+        // Advance the simulation clock by a fixed step (see `DT`).
+        world.resource_mut::<Time>().advance_by(DT);
         schedule.run(&mut world);
 
         // Bake every triangle into one shared vertex buffer in linear memory.
-        let elapsed = world.resource::<SimTime>().elapsed;
+        let elapsed = world.resource::<Time>().elapsed_secs();
         let mut verts: Vec<Vertex, LinearAllocator> =
             Vec::with_capacity_in(triangles.len() * 3, LinearAllocator);
         let mut query = world.query::<(&Body, &Spin, &Pulse, &Tint)>();
@@ -523,14 +522,20 @@ fn calculate_projections() -> Projections {
 mod tests {
     use super::*;
 
+    /// A `Time` resource with a given `delta_secs()`, for driving one
+    /// `schedule.run()` deterministically — mirrors how `bevy-time-check`
+    /// drives `Time` (`advance_by`, never `Instant::now()`).
+    fn time_with_delta(secs: f32) -> Time {
+        let mut t = Time::<()>::default();
+        t.advance_by(Duration::from_secs_f32(secs));
+        t
+    }
+
     /// The ECS schedule actually mutates component state when run.
     #[test]
     fn schedule_moves_and_spins_bodies() {
         let mut world = World::new();
-        world.insert_resource(SimTime {
-            elapsed: 0.0,
-            dt: 0.5,
-        });
+        world.insert_resource(time_with_delta(0.5));
         let e = world
             .spawn((
                 Body {
@@ -557,10 +562,7 @@ mod tests {
     #[test]
     fn bounce_keeps_bodies_in_bounds() {
         let mut world = World::new();
-        world.insert_resource(SimTime {
-            elapsed: 0.0,
-            dt: 1.0,
-        });
+        world.insert_resource(time_with_delta(1.0));
         let e = world
             .spawn(Body {
                 pos: Vec2::new(BOUND_X - 0.01, 0.0),
@@ -598,7 +600,7 @@ mod tests {
     #[test]
     fn tint_spins_hue_and_bakes_corner_colors() {
         let mut world = World::new();
-        world.insert_resource(SimTime { elapsed: 0.0, dt: 1.0 });
+        world.insert_resource(time_with_delta(1.0));
         let e = world
             .spawn(Tint {
                 hue: 0.0,

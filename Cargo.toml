@@ -5,6 +5,7 @@ members = [
     "crates/bevy-math-check",
     "crates/bevy-transform-check",
     "crates/bevy-color-check",
+    "crates/bevy-time-check",
     "crates/all-checks",
 ]
 resolver = "3"
@@ -24,6 +25,9 @@ bevy_ecs = { version = "0.19", default-features = false, features = ["std"] }
 bevy_math = { version = "0.19", default-features = false, features = ["std"] }
 # HSL hue-cycling per triangle — see crates/bevy-color-check. No `bevy_reflect`.
 bevy_color = { version = "0.19", default-features = false, features = ["std"] }
+# The sim clock (`Time::advance_by`, driven by a fixed dt, never `Instant::now`)
+# — see crates/bevy-time-check. No `bevy_reflect`.
+bevy_time = { version = "0.19", default-features = false, features = ["std"] }
 
 # Optimise even the debug `.3dsx` a bit — an unoptimised bevy_ecs + f32 render
 # loop is painfully slow on ARM11.

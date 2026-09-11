@@ -16,7 +16,9 @@ publish = false
 #   ./scripts/test-emulator.sh -p all-checks   # GDB runner -> emulator
 [dependencies]
 # union of bevy-color-check ("std"), bevy-math-check ("std","curve","rand"),
-# bevy-transform-check ("std"), bevy-ecs-check ("std"), bevy-time-check ("std")
+# bevy-transform-check ("std"), bevy-ecs-check ("std"), bevy-time-check ("std"),
+# bevy-ptr-check (no features)
+bevy_ptr = { version = "0.19" }
 bevy_color = { version = "0.19", default-features = false, features = ["std"] }
 bevy_math = { version = "0.19", default-features = false, features = ["std", "curve", "rand"] }
 bevy_ecs = { version = "0.19", default-features = false, features = ["std"] }

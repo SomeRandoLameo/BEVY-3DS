@@ -86,9 +86,9 @@ Put any files the app loads at runtime in `romfs/`.
 
 - `.` — the `dove` app.
 - `crates/bevy-ecs-check`, `crates/bevy-math-check`, `crates/bevy-transform-check`,
-  `crates/bevy-color-check`, `crates/bevy-time-check` — standalone probes that
-  pull in one Bevy crate (no `citro3d` in the tree) and run assertion tests
-  on-device to confirm it works on `armv6k-nintendo-3ds`.
+  `crates/bevy-color-check`, `crates/bevy-time-check`, `crates/bevy-ptr-check` —
+  standalone probes that pull in one Bevy crate (no `citro3d` in the tree) and
+  run assertion tests on-device to confirm it works on `armv6k-nintendo-3ds`.
 
   ```sh
   cargo 3ds build -p bevy-ecs-check                 # compile + link
@@ -108,18 +108,19 @@ Put any files the app loads at runtime in `romfs/`.
   | `bevy-transform-check` | `bevy_transform` (+`bevy_ecs`/`bevy_app`, `std`, `bevy-support`) | 0.19.1 | 129/129 checks ✅ (whole public API + `App::update()`) |
   | `bevy-color-check` | `bevy_color` (`std`, no reflect/serialize) | 0.19.1 | 381/381 checks ✅ (every color space + conversion graph) |
   | `bevy-time-check` | `bevy_time` (+`bevy_app`/`bevy_ecs`/`bevy_platform`, `std`) | 0.19.1 | 161/161 checks ✅ (whole public API, deterministic — see caveat below) |
+  | `bevy-ptr-check` | `bevy_ptr` (no deps, no features) | 0.19.1 | 69/69 checks ✅ (whole public API, incl. a real unaligned-read check on ARMv6) |
 
   `crates/all-checks` bundles every check crate's `#[test]`s into a **single**
-  on-device test binary (192 test functions / 1168 checks total as of this
+  on-device test binary (231 test functions / 1237 checks total as of this
   writing) via `#[path]`, so `./scripts/send-tests.sh all` sends the whole
   suite as one app instead of one per crate.
 
   Findings, caveats and the full port classification live in `port.md`
   (`bevy_ecs` §"Was verifiziert ist" / §B1–§B2, `bevy_math` §B9, `bevy_transform`
-  §B10, `bevy_color` §B11, `bevy_time` §B12). `bevy-time-check` drives every
-  clock deterministically (`TimeUpdateStrategy`/`advance_by`) rather than the
-  real wall clock — whether `Instant::now()` behaves on real 3DS **hardware**
-  stays an open question (§B6).
+  §B10, `bevy_color` §B11, `bevy_time` §B12, `bevy_ptr` §B13). `bevy-time-check`
+  drives every clock deterministically (`TimeUpdateStrategy`/`advance_by`)
+  rather than the real wall clock — whether `Instant::now()` behaves on real
+  3DS **hardware** stays an open question (§B6).
 
 - `crates/test-console` — an interactive `#![test_runner]` for the 3DS. Build a
   check crate's tests with `--features console` and the **test list appears on

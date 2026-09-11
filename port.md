@@ -3,7 +3,7 @@
 | bevy_ecs | Sicher (core, 1 Thread) | Core-ECS = reine Logik/Daten. Aber: nicht "platformfrei" — Entity-Allocator nutzt 64-bit-Atomics (Fallback, §B1), `thread_local!`, optionaler Parallel-Executor. | ✅ HW: spawn/despawn, `Query<&T>`/`Query<&mut T>`, `Res`/`ResMut`, `Schedule`+`.chain()`, `entity().get()` |
 | bevy_math | Sicher | glam-Reexport + Bevy-Primitives. Zieht **glam 0.32** neben citro3ds glam 0.30 (koexistieren, §B8), `scalar`-Backend (kein NEON). `rand`-Feature baut auf 3DS (kein `getrandom`, §B9). | ✅ **488/488 Checks** (57 Testfn, Emu, `crates/bevy-math-check`) — quasi die ganze öffentliche API. Vollständige Liste → `crates/bevy-math-check/README.md`, Überblick §B9 |
 | bevy_transform | Sicher (1 Thread) | Mathe + Hierarchie. Propagation nutzt `par_iter`/`ComputeTaskPool` — hat aber ohne `multi_threaded` **explizite serielle Fallbacks** (`serial`-Modul, `iter_mut`-Branches). Die laufen korrekt (§B10). | ✅ **129/129 Checks** (38 Testfn, Emu) — ganze öffentliche API inkl. Propagation, `TransformHelper`, `BuildChildrenTransformExt`, `TransformPlugin`/`App::update()`. Liste → `crates/bevy-transform-check/README.md`, Überblick §B10 |
-| bevy_ptr | Sicher | keine Platform-Annahmen | ✅ baut (transitiv via bevy_ecs) |
+| bevy_ptr | Sicher | keine Platform-Annahmen; fast ausschließlich `unsafe`-Zeigercode (Typ-Erasure, `Aligned`/`Unaligned`-Zugriffe) — genau die Art Code, bei der ARM-Alignment relevant werden könnte | ✅ **69/69 Checks** (39 Testfn, Emu, `crates/bevy-ptr-check`) — gesamte öffentliche API inkl. eines echten unausgerichteten `u32`-Reads auf `armv6k`. Liste → `crates/bevy-ptr-check/README.md`, Überblick §B13 |
 | bevy_utils | Sicher | keine Platform-Annahmen | ✅ baut (transitiv) |
 | bevy_platform | Sicher (mit Fallbacks) | **ist** die Platform-Abstraktion: Atomic-Shim (64-bit → `portable-atomic` Fallback), `Instant`, sync-Primitive. Baut für 3DS. | ✅ baut (transitiv) |
 | bevy_derive | Sicher | Makros, keine Runtime-Abhängigkeit ||
@@ -90,16 +90,24 @@ sind bisher nur Emulator-verifiziert, s. u.) sowie mit Assertions im Emulator
   `svcGetSystemTick`). **Nicht beantwortet:** ob `Instant::now()` auf echter
   3DS-Hardware eine brauchbare/monotone Auflösung liefert (§B6 bleibt offen;
   nur ein einzelner Monotonie-Sanity-Check lief im Emulator).
+- `bevy_ptr` 0.19.1, keine Features (die Crate hat keine): **69 Assertion-
+  Checks** (39 Testfunktionen) im Emulator — die gesamte öffentliche API
+  (`Ptr`/`PtrMut`/`OwningPtr`/`MovingPtr`/`ConstNonNull`/`ThinSlicePtr`,
+  `move_as_ptr!`/`deconstruct_moving_ptr!`), inkl. eines echten unausgerichteten
+  `u32`-Reads über einen absichtlich fehlausgerichteten Byte-Puffer — bestätigt,
+  dass `armv6k` unausgerichtete Mehrbyte-Loads korrekt handhabt. Siehe §B13 /
+  `crates/bevy-ptr-check/README.md`. Nicht ins Demo eingebaut (reines
+  ECS-internes Hilfswerkzeug, `dove` selbst benutzt es nie direkt).
 - Transitiv mitgebaut **+ gelinkt** (nicht separat funktionsgetestet):
-  `bevy_platform`, `bevy_ptr`, `bevy_utils`, `bevy_tasks` (single-threaded), `bevy_ecs_macros`,
+  `bevy_platform`, `bevy_utils`, `bevy_tasks` (single-threaded), `bevy_ecs_macros`,
   `bevy_derive`, `glam` 0.32, `crossbeam-channel` (via `bevy_time`'s `std`-Feature).
 
 Vehikel für weitere isolierte Tests: **`crates/bevy-ecs-check`**,
 **`crates/bevy-math-check`**, **`crates/bevy-transform-check`**,
-**`crates/bevy-color-check`**, **`crates/bevy-time-check`** (jeweils ohne
-citro3d im Baum, on-device via `./scripts/test-emulator.sh -p <crate>`;
-`crates/all-checks` bündelt alle fünf in eine `.3dsx`, 192 Testfunktionen /
-1168 Checks insgesamt).
+**`crates/bevy-color-check`**, **`crates/bevy-time-check`**,
+**`crates/bevy-ptr-check`** (jeweils ohne citro3d im Baum, on-device via
+`./scripts/test-emulator.sh -p <crate>`; `crates/all-checks` bündelt alle
+sechs in eine `.3dsx`, 231 Testfunktionen / 1237 Checks insgesamt).
 
 ### Plattform-Fakten `armv6k-nintendo-3ds`
 
@@ -331,6 +339,44 @@ Abgedeckt (die gesamte öffentliche API):
   (Render-Welt-Kanal, ohne `bevy_render` irrelevant), Zeitverhalten von
   `TimeUpdateStrategy::Automatic` unter echter Last.
 
+**§B13 — bevy_ptr: Testergebnis (`crates/bevy-ptr-check`).**
+`bevy_ptr` 0.19.1, keine Features (die Crate hat keine — `#![no_std]`,
+null Dependencies). Lauf: `./scripts/test-emulator.sh -p bevy-ptr-check`.
+**39 / 39 Testfunktionen · 69 / 69 Checks bestanden** (+ 1 `#[should_panic]`-
+Test ohne Tabellenzeile), exakte Werte-/Adressvergleiche.
+
+→ **Vollständige Liste** (jede Funktion · Eingabe · Erwartet · **tatsächliche Ausgabe** · OK,
+38 Sektionen): **`crates/bevy-ptr-check/README.md`**.
+
+Abgedeckt (die gesamte öffentliche API):
+
+| Bereich | Umfang |
+|---|---|
+| `ConstNonNull<T>` | `new`/`new_unchecked`/`as_ref`, alle `From`-Impls, `Copy`/`Clone` |
+| `Ptr<'a, A>` | `from(&T)`, `deref::<T>()`, `as_ptr`, `byte_offset`/`byte_add`, `to_unaligned`, `assert_unique()` → `PtrMut` |
+| `PtrMut<'a, A>` | `from(&mut T)`, `deref_mut`, `reborrow`, `as_ref` → `Ptr`, `promote()` → `OwningPtr` |
+| `OwningPtr<'a, A>` | `make()` (sichere Konstruktion), `read`, `drop_as` (Destruktor-Lauf per Zähler verifiziert), `cast()` → `MovingPtr`, `as_ref`/`as_mut`, `read_unaligned` |
+| `MovingPtr<'a, T, A>` + Makros | `read`/`write_to`/`assign_to` (alte Werte korrekt gedroppt, per Zähler verifiziert), `Drop`-Verhalten bei nie-konsumiertem Pointer, `move_as_ptr!`/`deconstruct_moving_ptr!` (Struct/Tuple/`MaybeUninit`, aus `bevy_ptr`s eigenen Doku-Beispielen), `partial_move`, `From<MovingPtr> for OwningPtr` |
+| `ThinSlicePtr<'a, T>` | `From<&[T]>`, `get_unchecked`, `as_slice_unchecked`, `UnsafeCell<T>`-Spezialisierung (`as_mut_slice_unchecked`, `cast`) |
+| `UnsafeCellDeref` | `deref`/`deref_mut`/`read` |
+| Alignment | echter unausgerichteter `u32`-Read über einen absichtlich fehlausgerichteten Puffer; `#[should_panic]`, dass der `Aligned`-Pfad Fehlausrichtung im Debug-Build tatsächlich ablehnt |
+| Layout | `size_of`/`align_of` — bestätigt, dass `Ptr`/`PtrMut`/`OwningPtr`/`ConstNonNull` exakt zeigergroß sind |
+
+- **Unausgerichtete Reads funktionieren auf `armv6k`.** Ein `u32` an einem
+  absichtlich nicht-4-Byte-ausgerichteten Offset (Offset dynamisch aus der
+  tatsächlichen Pufferadresse berechnet, nicht fest verdrahtet — sonst war der
+  Test nur zufällig "misaligned", je nachdem wo der Compiler den Stack-Puffer
+  platziert hat) lässt sich über `OwningPtr<Unaligned>::read_unaligned::<u32>()`
+  korrekt zurücklesen. Bestätigt die Grundannahme hinter `bevy_ptr`s
+  `Aligned`/`Unaligned`-Unterscheidung für diese Plattform.
+- **Debug-Alignment-Check funktioniert:** `Ptr::deref` auf einem fehlausgerichteten
+  Zeiger panickt im Debug-Build wie dokumentiert (`debug_ensure_aligned`) —
+  `debug_assertions` ist im `cargo 3ds test`-Profil aktiv.
+- **Nicht abgedeckt:** `TryFrom<MovingPtr<Unaligned>> for MovingPtr<Aligned>`
+  (weder Erfolgs- noch Fehlerpfad explizit getestet), `partial_move`/
+  `move_field` nur an einem einfachen Zwei-Felder-Beispiel, `IsAligned`-Trait
+  direkt (nur indirekt über `Ptr`/`OwningPtr`/`MovingPtr`).
+
 ### Erledigt
 
 - ✅ `bevy_math` inkl. `rand`/`sampling` — §B9 (`bevy-math-check`, 488/488 Checks, quasi ganze API)
@@ -341,6 +387,8 @@ Abgedeckt (die gesamte öffentliche API):
   381/381 Checks) — und im Demo verbaut (`Tint`)
 - ✅ `bevy_time` — gesamte öffentliche API, deterministisch — §B12 (`bevy-time-check`,
   161/161 Checks). `Instant::now()` auf Hardware bleibt offen (s. Schritt 7)
+- ✅ `bevy_ptr` — gesamte öffentliche API inkl. echtem unausgerichtetem Read auf
+  `armv6k` — §B13 (`bevy-ptr-check`, 69/69 Checks)
 
 ### Empfohlene nächste Schritte (on-device via ein `bevy-*-check`)
 

@@ -1,0 +1,29 @@
+[package]
+name = "bevy-ptr-check"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Standalone probe: does `bevy_ptr` — bevy_ecs's type-erased raw-pointer
+# toolkit (`Ptr`/`PtrMut`/`OwningPtr`/`MovingPtr`/`ThinSlicePtr`, `Aligned`
+# vs `Unaligned`) — behave correctly on `armv6k-nintendo-3ds`? No features,
+# no dependencies (`#![no_std]`, zero-dep crate) — the only real platform
+# question is whether unaligned reads/writes (the `Unaligned` type parameter)
+# actually work on ARMv6.
+#
+#   cargo 3ds build -p bevy-ptr-check
+#   ./scripts/test-emulator.sh -p bevy-ptr-check
+[dependencies]
+bevy_ptr = { version = "0.19" }
+
+[features]
+# `--features console` swaps the GDB test runner for the interactive
+# bottom-screen menu runner (`test-console`). Tests are unchanged either way.
+console = []
+
+[dev-dependencies]
+# GDB-backed test harness so `cargo 3ds test -p bevy-ptr-check` runs on
+# emulator / hardware. See ../../scripts/test-emulator.sh.
+test-runner = { git = "https://github.com/rust3ds/ctru-rs" }
+# Interactive on-device runner (used with `--features console`).
+test-console = { path = "../test-console" }

@@ -6,19 +6,29 @@ and [`citro3d`](https://github.com/rust3ds/citro3d-rs).
 Scaffolded with `cargo 3ds new` (the modern replacement for the archived
 `rust3ds/rust3ds-template`).
 
-Right now it runs a swarm of rainbow triangles: every triangle is a
-[`bevy_ecs`](https://docs.rs/bevy_ecs) entity `(Body, Spin, Pulse, Tint)` with
-[`bevy_math`](https://docs.rs/bevy_math) `Vec2` positions and a
-[`bevy_color`](https://docs.rs/bevy_color) `Hsla` hue that spins over time
-(`Hue::rotate_hue`) and gets baked to `Srgba` corner colours 120° apart on the
-wheel. The sim clock is a [`bevy_time`](https://docs.rs/bevy_time) `Time`
-resource, advanced each frame by a fixed `Time::advance_by(DT)` step — not
-`Instant::now()`, since whether that's accurate on real 3DS hardware is still
-unverified (see `crates/bevy-time-check`). A `Schedule` of `drift` → `bounce` +
-`spin` + `tint` systems reads `Res<Time>` to update them each frame, and the
-render loop reads the component state back out — on the top screen in
-stereoscopic 3D (left/right-eye projections driven by the hardware 3D slider)
-and on the bottom screen with a plain centered projection.
+Right now it runs a swarm of rainbow triangles, simulated by a real
+[`bevy_app`](https://docs.rs/bevy_app) `App` instead of a bare `World` +
+`Schedule`: `App::new()` (**not** `App::default()`'s `DefaultPlugins` cousin —
+that needs `bevy_render`/`bevy_winit`, which don't exist for this target) plus
+exactly one plugin, [`bevy_time`](https://docs.rs/bevy_time)'s `TimePlugin`,
+pinned to `TimeUpdateStrategy::ManualDuration` so the clock advances by a fixed
+step every `app.update()` instead of calling `Instant::now()` (whether that's
+accurate on real 3DS hardware is still unverified — see
+`crates/bevy-time-check`). `main()` calls `app.update()` once per frame; that
+runs the same `First → PreUpdate → RunFixedMainLoop → Update → PostUpdate →
+Last` schedule pipeline already proven on-device by `bevy-transform-check`'s
+and `bevy-time-check`'s own `App`-based tests, now driving a real interactive
+loop. Every triangle is a [`bevy_ecs`](https://docs.rs/bevy_ecs) entity
+`(Body, Spin, Pulse, Tint)` with [`bevy_math`](https://docs.rs/bevy_math)
+`Vec2` positions and a [`bevy_color`](https://docs.rs/bevy_color) `Hsla` hue
+that spins over time (`Hue::rotate_hue`) and gets baked to `Srgba` corner
+colours 120° apart on the wheel; our `drift` → `bounce` + `spin` + `tint`
+systems on the `Update` schedule read `Res<Time>` to update them each frame.
+The render loop (outside the `App` — citro3d's borrowed render targets aren't
+`'static`, so they can't be ECS resources) reads the component state back out
+via `app.world()` — on the top screen in stereoscopic 3D (left/right-eye
+projections driven by the hardware 3D slider) and on the bottom screen with a
+plain centered projection.
 
 Rendering is **batched for throughput**: instead of a draw call per triangle,
 every triangle is transformed on the CPU into one shared vertex buffer in linear
@@ -37,12 +47,13 @@ is enabled at startup.
 
 The PICA200 vertex shader lives in `src/vshader.pica` and is compiled at build
 time by `citro3d`'s `include_shader!` macro (which shells out to devkitPro's
-`picasso`). `bevy_ecs`, `bevy_math`, `bevy_color` and `bevy_time` are all
-`default-features = false, features = ["std"]` — no `bevy_reflect` on any of
-them, no `rand`/`curve` on `bevy_math`, no `serialize` on `bevy_color` — see
-`crates/bevy-ecs-check`/`bevy-math-check`/`bevy-color-check`/`bevy-time-check`
-for why that works on the 3DS. `bevy_math` pulls its own `glam` 0.32 alongside `citro3d`'s
-`glam` 0.30; the two coexist and we only touch `bevy_math`'s.
+`picasso`). `bevy_ecs`, `bevy_math`, `bevy_color`, `bevy_time` and `bevy_app`
+are all `default-features = false, features = ["std"]` — no `bevy_reflect` on
+any of them, no `rand`/`curve` on `bevy_math`, no `serialize` on `bevy_color` —
+see `crates/bevy-ecs-check`/`bevy-math-check`/`bevy-color-check`/
+`bevy-time-check`/`bevy-transform-check` for why that works on the 3DS.
+`bevy_math` pulls its own `glam` 0.32 alongside `citro3d`'s `glam` 0.30; the
+two coexist and we only touch `bevy_math`'s.
 
 ## Prerequisites
 

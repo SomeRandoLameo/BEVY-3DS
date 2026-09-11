@@ -1,20 +1,35 @@
-//! `dove` — a swarm of rainbow triangles simulated by `bevy_ecs` and drawn with
-//! `citro3d`, tuned for throughput.
+//! `dove` — a swarm of rainbow triangles simulated by a real `bevy_app::App`
+//! and drawn with `citro3d`, tuned for throughput.
+//!
+//! The simulation is driven by `bevy_app` instead of a bare `bevy_ecs::World` +
+//! `Schedule`: `App::new()` — deliberately **not** `App::default()`'s wider
+//! cousin with `DefaultPlugins` (that needs `bevy_render`/`bevy_winit`, which
+//! don't exist for this target) — plus exactly one plugin, `bevy_time`'s
+//! `TimePlugin`, and our own systems on `Update`. `main()` calls
+//! [`App::update()`] once per frame instead of `Schedule::run`; this is the
+//! same `App`/`Plugin`/schedule machinery — `First` → `PreUpdate` →
+//! `RunFixedMainLoop` → `Update` → `PostUpdate` → `Last`, message registry
+//! and all — already proven on-device by `bevy-transform-check`'s and
+//! `bevy-time-check`'s own `App`-based tests, now driving a real interactive
+//! app loop instead of isolated test cases.
 //!
 //! Every entity is `(Body, Spin, Pulse, Tint)` with `bevy_math` `Vec2`
-//! positions. The sim clock is a `bevy_time::Time` resource, advanced each
-//! frame by a fixed `Time::advance_by(DT)` — deliberately **not**
-//! `Instant::now()`-driven, since whether that's accurate on real 3DS
-//! hardware is still unverified (see `crates/bevy-time-check`). A `bevy_ecs`
-//! `Schedule` of `drift` → `bounce` + `spin` + `tint` reads `Res<Time>` each
-//! frame to advance them. `tint` spins a `bevy_color::Hsla` hue per entity
-//! (`Hue::rotate_hue`) and bakes it down to `Srgba` corner colours 120° apart
-//! on the colour wheel, so each triangle is a rotating tri-colour swatch instead
-//! of a fixed RGB corner scheme. The render loop reads the component state back
-//! out, transforms every triangle **on the CPU into one shared vertex buffer**
-//! (`Vec2::from_angle` / `Vec2::rotate` for the spin), and then issues exactly
-//! **one draw call per screen** (3 total) instead of one per triangle — so cost
-//! scales with vertices pushed, not with draw-call overhead.
+//! positions. The sim clock is `TimePlugin`'s `Time` resource; it's pinned to
+//! `TimeUpdateStrategy::ManualDuration(DT)` so it advances by a fixed step
+//! every `app.update()` — deliberately **not** `Instant::now()`-driven (which
+//! `TimePlugin`'s default `Automatic` strategy would use), since whether that's
+//! accurate on real 3DS hardware is still unverified (see
+//! `crates/bevy-time-check`). Our `Update`-schedule systems `drift` → `bounce` +
+//! `spin` + `tint` read `Res<Time>` each frame to advance them. `tint` spins a
+//! `bevy_color::Hsla` hue per entity (`Hue::rotate_hue`) and bakes it down to
+//! `Srgba` corner colours 120° apart on the colour wheel, so each triangle is a
+//! rotating tri-colour swatch instead of a fixed RGB corner scheme. The render
+//! loop (outside the `App` — citro3d's borrowed render targets don't fit as
+//! `'static` ECS resources) reads the component state back out via
+//! `app.world()`, transforms every triangle **on the CPU into one shared
+//! vertex buffer** (`Vec2::from_angle` / `Vec2::rotate` for the spin), and then
+//! issues exactly **one draw call per screen** (3 total) instead of one per
+//! triangle — so cost scales with vertices pushed, not with draw-call overhead.
 //!
 //! Controls: **A/B** ±8 triangles · hold **X/Y** ±32 per frame · **SELECT**
 //! reset · **L** toggle the bottom-screen metrics console · **START** exit.
@@ -29,10 +44,11 @@
 #![cfg_attr(all(test, not(feature = "console")), test_runner(test_runner::run_gdb))]
 #![cfg_attr(all(test, feature = "console"), test_runner(test_console::run))]
 
+use bevy_app::prelude::*;
 use bevy_color::{ColorToComponents, Hsla, Hue, Srgba};
 use bevy_ecs::prelude::*;
 use bevy_math::{Vec2, Vec3};
-use bevy_time::Time;
+use bevy_time::{Time, TimePlugin, TimeUpdateStrategy};
 use citro3d::macros::include_shader;
 use citro3d::math::{AspectRatio, ClipPlanes, Matrix4, Projection, StereoDisplacement};
 use citro3d::render::{ClearFlags, Frame, ScreenTarget, Target};
@@ -288,16 +304,20 @@ fn main() {
         .src(texenv::Mode::BOTH, texenv::Source::PrimaryColor, None, None)
         .func(texenv::Mode::BOTH, texenv::CombineFunc::Replace);
 
-    // --- ECS world ---
-    let mut world = World::new();
-    world.insert_resource(Time::<()>::default());
+    // --- bevy_app ---
+    // `App::new()`, not `App::default()`'s `DefaultPlugins` cousin (needs
+    // bevy_render/bevy_winit) — just `TimePlugin` and our own systems.
+    let mut app = App::new();
+    app.add_plugins(TimePlugin);
+    // Pin the clock to a fixed step advanced every `app.update()`, instead of
+    // `TimePlugin`'s default `Automatic` strategy (which would call
+    // `Instant::now()` — see the module docs for why we avoid that).
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(DT));
+    app.add_systems(Update, ((drift, bounce).chain(), spin, tint));
 
     let mut rng = Rng(0x9E37_79B9);
     let mut triangles: Vec<Entity> = Vec::with_capacity(MAX_TRIANGLES);
-    resize_swarm(&mut world, &mut rng, &mut triangles, START_TRIANGLES);
-
-    let mut schedule = Schedule::default();
-    schedule.add_systems(((drift, bounce).chain(), spin, tint));
+    resize_swarm(app.world_mut(), &mut rng, &mut triangles, START_TRIANGLES);
 
     // Hold the previous frame's vertex buffer alive until this frame's
     // `C3D_FrameBegin(SYNCDRAW)` has confirmed the GPU is done reading it.
@@ -353,19 +373,21 @@ fn main() {
         }
         target_count = target_count.min(MAX_TRIANGLES);
         if target_count != triangles.len() {
-            resize_swarm(&mut world, &mut rng, &mut triangles, target_count);
+            resize_swarm(app.world_mut(), &mut rng, &mut triangles, target_count);
         }
 
-        // Advance the simulation clock by a fixed step (see `DT`).
-        world.resource_mut::<Time>().advance_by(DT);
-        schedule.run(&mut world);
+        // Runs the full `Main` schedule once: `First` (TimePlugin's
+        // `time_system` advances `Time` by `DT`) → `PreUpdate` →
+        // `RunFixedMainLoop` → `Update` (our `drift`/`bounce`/`spin`/`tint`) →
+        // `PostUpdate` → `Last`.
+        app.update();
 
         // Bake every triangle into one shared vertex buffer in linear memory.
-        let elapsed = world.resource::<Time>().elapsed_secs();
+        let elapsed = app.world().resource::<Time>().elapsed_secs();
         let mut verts: Vec<Vertex, LinearAllocator> =
             Vec::with_capacity_in(triangles.len() * 3, LinearAllocator);
-        let mut query = world.query::<(&Body, &Spin, &Pulse, &Tint)>();
-        for (body, spin, pulse, tint) in query.iter(&world) {
+        let mut query = app.world_mut().query::<(&Body, &Spin, &Pulse, &Tint)>();
+        for (body, spin, pulse, tint) in query.iter(app.world()) {
             let scale = pulse.base + pulse.amp * (elapsed * pulse.freq + pulse.phase).sin();
             let rotation = Vec2::from_angle(spin.angle);
             for (&offset, &color) in BASE.iter().zip(&tint.colors) {
@@ -641,5 +663,42 @@ mod tests {
         schedule.run(&mut world);
         let t = world.entity(e).get::<Tint>().unwrap();
         assert_eq!(t.hue, 0.0);
+    }
+
+    /// The whole `App`/`TimePlugin`/`Update`-schedule pipeline `main()` now
+    /// drives via `app.update()`, exercised end-to-end (not just the
+    /// individual systems via a bare `Schedule`, as the tests above do) —
+    /// this is what actually proves the `bevy_app` rewrite works.
+    #[test]
+    fn app_update_drives_the_swarm_end_to_end() {
+        let mut app = App::new();
+        app.add_plugins(TimePlugin);
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(DT));
+        app.add_systems(Update, ((drift, bounce).chain(), spin, tint));
+
+        let e = app
+            .world_mut()
+            .spawn((
+                Body { pos: Vec2::ZERO, vel: Vec2::new(1.0, 0.0) },
+                Spin { angle: 0.0, rate: 1.0 },
+                Tint { hue: 0.0, hue_rate: 90.0, solid: false, colors: [Vec3::ZERO; 3] },
+            ))
+            .id();
+
+        // The first `app.update()` only establishes `Time::<Real>::last_update`
+        // (delta ZERO — see bevy-time-check's `real_time.rs`), so nothing has
+        // moved yet.
+        app.update();
+        let body = app.world().entity(e).get::<Body>().unwrap();
+        assert_eq!(body.pos, Vec2::ZERO, "first update's delta is ZERO");
+
+        // From the second update onward, each step really is `DT` (1/60s).
+        app.update();
+        let dt = DT.as_secs_f32();
+        let body = app.world().entity(e).get::<Body>().unwrap();
+        assert!((body.pos.x - dt).abs() < 1e-6, "pos.x = {}", body.pos.x);
+        let tint = app.world().entity(e).get::<Tint>().unwrap();
+        assert!((tint.hue - 90.0 * dt).abs() < 1e-4, "hue = {}", tint.hue);
+        assert!(tint.colors.iter().all(|c| *c != Vec3::ZERO), "tint baked real colors");
     }
 }

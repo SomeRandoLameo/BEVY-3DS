@@ -29,6 +29,11 @@ bevy_color = { version = "0.19", default-features = false, features = ["std"] }
 # The sim clock (`Time::advance_by`, driven by a fixed dt, never `Instant::now`)
 # — see crates/bevy-time-check. No `bevy_reflect`.
 bevy_time = { version = "0.19", default-features = false, features = ["std"] }
+# Drives the demo: `App::new()` (no `DefaultPlugins` — those need bevy_render/
+# bevy_winit, which we don't have) + `TimePlugin`, `app.update()` per frame
+# instead of a bare `World`/`Schedule`. Already proven on-device by
+# bevy-transform-check/bevy-time-check's own `App`-based tests. No `bevy_reflect`.
+bevy_app = { version = "0.19", default-features = false, features = ["std"] }
 
 # Optimise even the debug `.3dsx` a bit — an unoptimised bevy_ecs + f32 render
 # loop is painfully slow on ARM11.

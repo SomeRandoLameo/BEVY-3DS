@@ -16,6 +16,8 @@ bevy_ecs = { version = "0.19", default-features = false, features = ["std"] }
 # `--features console` swaps the GDB test runner for the interactive
 # bottom-screen menu runner (`test-console`). Tests are unchanged either way.
 console = []
+# SCRATCH: feasibility probe, not wired into any test yet.
+multi_threaded_probe = ["bevy_ecs/multi_threaded"]
 
 [dev-dependencies]
 # GDB-backed test harness so `cargo 3ds test -p bevy-ecs-check` runs on

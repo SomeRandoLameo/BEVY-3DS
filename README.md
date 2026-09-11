@@ -114,7 +114,7 @@ Put any files the app loads at runtime in `romfs/`.
 
   | crate | Bevy unit | version | result |
   |---|---|---|---|
-  | `bevy-ecs-check` | `bevy_ecs` (`std`, no reflect/threads) | 0.19.1 | 9/9 checks ✅ |
+  | `bevy-ecs-check` | `bevy_ecs` (`std`, no reflect/threads) | 0.19.1 | 135/135 checks ✅ (whole public API: World, Commands, Queries, Change Detection, Resources, Components/Bundles, Relationships, Messages, Observers, Schedules) |
   | `bevy-math-check` | `bevy_math` + `glam` 0.32 + `rand` (`std`, `curve`, `rand`) | 0.19.1 | 488/488 checks ✅ (≈ whole public API) |
   | `bevy-transform-check` | `bevy_transform` (+`bevy_ecs`/`bevy_app`, `std`, `bevy-support`) | 0.19.1 | 129/129 checks ✅ (whole public API + `App::update()`) |
   | `bevy-color-check` | `bevy_color` (`std`, no reflect/serialize) | 0.19.1 | 381/381 checks ✅ (every color space + conversion graph) |
@@ -122,12 +122,12 @@ Put any files the app loads at runtime in `romfs/`.
   | `bevy-ptr-check` | `bevy_ptr` (no deps, no features) | 0.19.1 | 69/69 checks ✅ (whole public API, incl. a real unaligned-read check on ARMv6) |
 
   `crates/all-checks` bundles every check crate's `#[test]`s into a **single**
-  on-device test binary (231 test functions / 1237 checks total as of this
-  writing) via `#[path]`, so `./scripts/send-tests.sh all` sends the whole
-  suite as one app instead of one per crate.
+  on-device test binary (300 test functions total as of this writing) via
+  `#[path]`, so `./scripts/send-tests.sh all` sends the whole suite as one app
+  instead of one per crate.
 
   Findings, caveats and the full port classification live in `port.md`
-  (`bevy_ecs` §"Was verifiziert ist" / §B1–§B2, `bevy_math` §B9, `bevy_transform`
+  (`bevy_ecs` §B1–§B4/§B14, `bevy_math` §B9, `bevy_transform`
   §B10, `bevy_color` §B11, `bevy_time` §B12, `bevy_ptr` §B13). `bevy-time-check`
   drives every clock deterministically (`TimeUpdateStrategy`/`advance_by`)
   rather than the real wall clock — whether `Instant::now()` behaves on real

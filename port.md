@@ -1,6 +1,6 @@
 | Crate | Einstufung | Begründung | getestet |
 |---|---|---|---|
-| bevy_ecs | Sicher (core, 1 Thread) | Core-ECS = reine Logik/Daten. Aber: nicht "platformfrei" — Entity-Allocator nutzt 64-bit-Atomics (Fallback, §B1), `thread_local!`, optionaler Parallel-Executor. | ✅ HW: spawn/despawn, `Query<&T>`/`Query<&mut T>`, `Res`/`ResMut`, `Schedule`+`.chain()`, `entity().get()` |
+| bevy_ecs | Sicher (core, 1 Thread) | Core-ECS = reine Logik/Daten. Aber: nicht "platformfrei" — Entity-Allocator nutzt 64-bit-Atomics (Fallback, §B1), `thread_local!`, optionaler Parallel-Executor. | ✅ **135/135 Checks** (75 Testfn, Emu, `crates/bevy-ecs-check`) — gesamte öffentliche API: `World`, `Commands`, Queries + alle Filter, Change Detection, Resources, Components/Bundles/`#[require(...)]`, `ChildOf`/`Children`, Messages (ex-`Events`), Observers, Schedules/`run_if`/`SystemSet`. Liste → `crates/bevy-ecs-check/README.md`, Überblick §B14 |
 | bevy_math | Sicher | glam-Reexport + Bevy-Primitives. Zieht **glam 0.32** neben citro3ds glam 0.30 (koexistieren, §B8), `scalar`-Backend (kein NEON). `rand`-Feature baut auf 3DS (kein `getrandom`, §B9). | ✅ **488/488 Checks** (57 Testfn, Emu, `crates/bevy-math-check`) — quasi die ganze öffentliche API. Vollständige Liste → `crates/bevy-math-check/README.md`, Überblick §B9 |
 | bevy_transform | Sicher (1 Thread) | Mathe + Hierarchie. Propagation nutzt `par_iter`/`ComputeTaskPool` — hat aber ohne `multi_threaded` **explizite serielle Fallbacks** (`serial`-Modul, `iter_mut`-Branches). Die laufen korrekt (§B10). | ✅ **129/129 Checks** (38 Testfn, Emu) — ganze öffentliche API inkl. Propagation, `TransformHelper`, `BuildChildrenTransformExt`, `TransformPlugin`/`App::update()`. Liste → `crates/bevy-transform-check/README.md`, Überblick §B10 |
 | bevy_ptr | Sicher | keine Platform-Annahmen; fast ausschließlich `unsafe`-Zeigercode (Typ-Erasure, `Aligned`/`Unaligned`-Zugriffe) — genau die Art Code, bei der ARM-Alignment relevant werden könnte | ✅ **69/69 Checks** (39 Testfn, Emu, `crates/bevy-ptr-check`) — gesamte öffentliche API inkl. eines echten unausgerichteten `u32`-Reads auf `armv6k`. Liste → `crates/bevy-ptr-check/README.md`, Überblick §B13 |
@@ -54,10 +54,12 @@ Erweiterung — alle drei sind bisher nur Emulator-verifiziert, s. u.) sowie mit
 Assertions im Emulator (`./scripts/test-emulator.sh`):
 
 - `bevy_ecs` 0.19.1, `default-features = false, features = ["std"]`:
-  `World`, `spawn`/`despawn`, `Query<&T>` **und** `Query<&mut T>` (Iteration + Mutation),
-  `Res`/`ResMut`, `Schedule` mit mehreren Systemen + `.chain()`, `world.entity(e).get::<T>()`,
-  `Query<Entity, With<T>>`, Bulk-Spawn/Despawn. **Alles single-threaded.**
-  9/9 Checks → **`crates/bevy-ecs-check/README.md`** (Funktion · Eingabe · Erwartet · Ausgabe).
+  **135 Assertion-Checks** (75 Testfunktionen) im Emulator — die gesamte
+  öffentliche API: `World`, `Commands`, Queries + alle Filter, Change
+  Detection, Resources, Components/Bundles/`#[require(...)]`, `ChildOf`/
+  `Children`, Messages (ex-`Events`), Observers, Schedules/`run_if`/
+  `SystemSet`, exotische System-Params. **Alles single-threaded.**
+  Siehe §B14 / `crates/bevy-ecs-check/README.md`.
 - `bevy_math` 0.19.1, `default-features = false, features = ["std", "curve", "rand"]`:
   **488 Assertion-Checks** (57 Testfunktionen) im Emulator — nahezu die komplette
   öffentliche API. Siehe §B9 / `crates/bevy-math-check/README.md`. In `dove` selbst nur `["std"]` nötig.
@@ -122,7 +124,7 @@ Vehikel für weitere isolierte Tests: **`crates/bevy-ecs-check`**,
 **`crates/bevy-color-check`**, **`crates/bevy-time-check`**,
 **`crates/bevy-ptr-check`** (jeweils ohne citro3d im Baum, on-device via
 `./scripts/test-emulator.sh -p <crate>`; `crates/all-checks` bündelt alle
-sechs in eine `.3dsx`, 231 Testfunktionen / 1237 Checks insgesamt).
+sechs in eine `.3dsx`, **300/300 Testfunktionen** bestanden im Emulator).
 
 ### Plattform-Fakten `armv6k-nintendo-3ds`
 
@@ -166,12 +168,16 @@ Kombiniert mit §B1 der Haupt-Risikoblock des ganzen Ports.
 **§B3 — `thread_local!`.** `bevy_ecs` nutzt TLS im Error-Handling (`error/bevy_error.rs`).
 `pthread-3ds` liefert TLS (`has-thread-local = true`), aber nicht funktionsgetestet.
 
-**§B4 — noch nicht ausgeübte Kern-APIs (alle single-thread, aber ungetestet):**
-`Commands` + deferred apply (`world.flush`), `EntityCommands`; Events/Messages
-(`EventReader`/`EventWriter`, `Events<T>`-Doppelpuffer + Update-System); Change Detection über
-Frames (`Added`/`Changed`/`Ref`, Tick-Wraparound bei ~2^31 Ticks); Hooks/Observers
-(`on_add`/`Trigger`/`Observer`); Relationships (`ChildOf`/`Children`); `SystemParam`-derive,
-`Local`, `NonSend`, `ParamSet`, exklusive Systeme (`&mut World`).
+**§B4 — Kern-APIs jenseits von spawn/despawn/Query/Res (alle single-thread).**
+**Erledigt (§B14, `bevy-ecs-check`):** `Commands` + deferred apply (`world.flush`/
+`CommandQueue::apply`), `EntityCommands`; Messages (0.19s Umbenennung von
+Events: `MessageReader`/`MessageWriter`, Doppelpuffer + Update-System);
+Change Detection über Frames (`Added`/`Changed`/`Ref`, inkl. der lazy
+`Mut<T>`-Markierung); Hooks/Observers (`On<Add/Insert/Remove, T>`, Custom-
+`Event`s über `On<E>`); Relationships (`ChildOf`/`Children`); `Local`,
+`ParamSet`, exklusive Systeme (`&mut World`). **Weiterhin ungetestet:**
+`NonSend` (auf einer Single-Thread-Homebrew ohnehin fragwürdig relevant),
+Tick-Wraparound bei ~2^31 Ticks (praktisch nicht erreichbar in einem Testlauf).
 
 **§B5 — Default-Features.** Wir fahren `default-features = false`. Bevy-Default =
 `bevy_reflect` + `async_executor` + `backtrace`. `backtrace` deaktiviert lassen
@@ -393,11 +399,77 @@ Abgedeckt (die gesamte öffentliche API):
   `move_field` nur an einem einfachen Zwei-Felder-Beispiel, `IsAligned`-Trait
   direkt (nur indirekt über `Ptr`/`OwningPtr`/`MovingPtr`).
 
+**§B14 — bevy_ecs: Testergebnis (`crates/bevy-ecs-check`).**
+`bevy_ecs` 0.19.1, Features `["std"]` (**kein** `bevy_reflect`, **kein**
+`multi_threaded`). Lauf: `./scripts/test-emulator.sh -p bevy-ecs-check`.
+**75 / 75 Testfunktionen · 135 / 135 Checks bestanden**, exakte Werte-/
+Strukturvergleiche.
+
+→ **Vollständige Liste** (jede Funktion · Eingabe · Erwartet · **tatsächliche Ausgabe** · OK,
+75 Sektionen): **`crates/bevy-ecs-check/README.md`**.
+
+Abgedeckt (die gesamte öffentliche API):
+
+| Bereich | Umfang |
+|---|---|
+| `World` (Rohzugriff) | `spawn`/`spawn_empty`/`spawn_batch`, `despawn`, `get_entity`/`entity`/`entity_mut`, `clear_entities()`, `Entities::len()` vs. `count_spawned()` |
+| `Commands` | standalone via `CommandQueue`/`Commands::new()`, Commands in einem `Schedule`-Lauf, `EntityCommands`, `spawn_batch`, Resource-Commands |
+| Queries (Basis) | `Query<&T>`/`Query<&mut T>`, `get`/`get_mut`, `contains`, `single()`/`single_mut()` (0/1/2-Treffer) |
+| Query-Kombinationen | `iter_combinations::<K>()`, `iter_many()` |
+| Query-Filter | `With`/`Without`, `Or`, `AnyOf`, `Has` |
+| Change Detection | `Added<T>`/`Changed<T>` über echte `Schedule`-Läufe, `Ref<T>`, `Res::is_changed()`, die lazy `Mut<T>`-Markierung |
+| Resources | `insert_resource`/`init_resource`, `remove_resource`, `FromWorld`, `Local<T>` |
+| Components/Bundles | `#[derive(Component)]`/`#[derive(Bundle)]`, `#[require(T)]`/`#[require(T = expr())]`, Transitivität |
+| `EntityRef`/`EntityMut`/`EntityWorldMut` | `contains`/`get`/`get_mut`/`insert_if_new`/`take`, `Entity`-Gleichheit/`index()` |
+| Relationships | `ChildOf`/`Children` (Auto-Populate, Despawn-Kaskade, `with_children`-Builder) |
+| Messages (ex-`Events`) | `MessageRegistry`, `MessageWriter`/`MessageReader`, Buffer-Swap-Semantik, `write_batch` |
+| Observers | `add_observer`/`trigger`, Component-Lifecycle (`On<Add/Insert/Remove, T>`), Commands-Flush |
+| Schedules & Conditions | `.chain()`, `.run_if()`, benannte `Schedules`, `run_system_once`, `SystemSet` |
+| Exotische System-Params | `ParamSet`, `RemovedComponents<T>`, exklusive Systeme |
+| Layout | `size_of`/`align_of` von `Entity`, `Option<Entity>`, `ChildOf` |
+
+- **Resources sind jetzt Components auf versteckten Entities.** 0.19s größte
+  interne Umstellung: `World::resource_entities()` mappt `ComponentId ->
+  Entity`. Direkte Folge: `World::clear_entities()` — das *jede* Entity
+  despawnt — **löscht jetzt auch alle Resources mit** (dokumentiert:
+  "This includes all resources, as they are stored as components"). Wer das
+  aus älteren Bevy-Versionen anders kennt, tappt hier in eine Falle.
+- **`World::new()` ist nie wirklich leer.** `bootstrap()` registriert
+  Lifecycle-Event-Keys und `init_resource`t `DefaultQueryFilters` — ein
+  frischer `World` hat also schon vor jedem Nutzercode mindestens eine
+  lebende (versteckte) Entity.
+- **`Entities::len()` ist kein Live-Count.** Es ist `self.meta.len()`, die
+  Anzahl je vergebener Index-Slots — schrumpft nie durch `despawn()` (Slots
+  werden per Generation-Bump recycelt, nicht entfernt). Intern wächst `meta`
+  zudem in Vec-Capacity-Sprüngen (`ensure_index_index_is_valid`'s `expand()`
+  resized auf `meta.capacity()`, nicht nur bis zum gebrauchten Index) — die
+  genaue Sprunggröße ist Implementierungsdetail und nicht verlässlich
+  vorhersagbar. `Entities::count_spawned()` (dokumentiert "intended only ...
+  for tests", O(n)) ist der tatsächliche Live-Count und wächst/schrumpft
+  exakt 1:1 mit spawn/despawn.
+- **`Mut<T>`s Änderungsmarkierung ist lazy.** Nur ein echter `DerefMut`-Zugriff
+  (z. B. `*m = x` oder `m.feld = x`) markiert eine Component als geändert —
+  bloßes `get_mut()` aufrufen und den Handle wieder fallen lassen zählt
+  **nicht**. Selbst der aktuelle Wert zurückschreiben (`m.0 = m.0`) zählt
+  aber sehr wohl, weil das trotzdem durch `DerefMut` geht — `bevy_ecs` trackt
+  "wurde geschrieben", nicht "hat sich der Wert wirklich geändert".
+- **`Added`/`Changed`-Filter "clearen" nur über einen echten `Schedule`-Lauf.**
+  Wiederholtes manuelles `QueryState::iter(&world)` ohne dazwischenliegenden
+  `Schedule::run()` advanced den "last observed tick" nicht richtig — für
+  Change-Detection-Tests zwingend über ein `Schedule` laufen lassen.
+- **Observer-`Commands` werden nicht automatisch geflusht.** Im Unterschied
+  zu einem System in einem `Schedule` (dessen deferred Params der Executor
+  automatisch anwendet) braucht ein Observer nach `World::trigger()` ein
+  explizites `World::flush()`, damit seine `Commands` tatsächlich wirken.
+- **Nicht abgedeckt:** `bevy_reflect`-Integration, `multi_threaded`/`Parallel`-
+  Query-Iteration (der §B2-Block), `System`-Piping, `EntityHashMap`/
+  `EntityHashSet` direkt, Observer-Propagation/Bubbling über `EntityEvent`.
+
 ### Erledigt
 
 - ✅ `bevy_math` inkl. `rand`/`sampling` — §B9 (`bevy-math-check`, 488/488 Checks, quasi ganze API)
 - ✅ `bevy_transform` — ganze öffentliche API inkl. `TransformPlugin`/`App::update()` — §B10 (`bevy-transform-check`, 129/129 Checks)
-- ✅ `bevy_ecs` core single-threaded — §"Was verifiziert ist"
+- ✅ `bevy_ecs` — gesamte öffentliche API single-threaded — §B14 (`bevy-ecs-check`, 135/135 Checks)
 - ✅ `bevy_app` — kompiliert, linkt **und `App::update()` läuft** (via bevy-transform-check §B10)
   — und treibt jetzt das Demo selbst: `App::new()` + `TimePlugin`, `app.update()` 60×/s im
   echten interaktiven Loop (2026-09-11)
@@ -410,10 +482,13 @@ Abgedeckt (die gesamte öffentliche API):
 
 ### Empfohlene nächste Schritte (on-device via ein `bevy-*-check`)
 
-1. `Commands` + `world.flush()` + `EntityCommands`
-2. Events (`Events<T>`, Reader/Writer, Update-System über mehrere Frames)
-3. Change Detection als eigener Test (`Added`/`Changed`/`Ref`, Tick-Verhalten)
-4. `SystemParam`-derive, `Local`, exklusives System, `ParamSet`
+1. ~~`Commands` + `world.flush()` + `EntityCommands`~~ ✅ erledigt — §B14 (`bevy-ecs-check`)
+2. ~~Events (`Events<T>`, Reader/Writer, Update-System über mehrere Frames)~~ ✅ erledigt
+   (0.19s Umbenennung zu Messages) — §B14 (`bevy-ecs-check`)
+3. ~~Change Detection als eigener Test (`Added`/`Changed`/`Ref`, Tick-Verhalten)~~ ✅ erledigt
+   — §B14 (`bevy-ecs-check`)
+4. ~~`SystemParam`-derive, `Local`, exklusives System, `ParamSet`~~ ✅ erledigt — §B14
+   (`bevy-ecs-check`)
 5. **`multi_threaded`**: `Schedule` mit parallelem Executor + 2 nicht-konfligierenden Systemen,
    `TaskPoolBuilder` auf 1–2 Threads, **auf Hardware**, Langlauf (§B1/§B2) — der harte Block
 6. `bevy_reflect` isoliert: `#[derive(Reflect)]`, `TypeRegistry`, `Box<dyn Reflect>`, Downcast

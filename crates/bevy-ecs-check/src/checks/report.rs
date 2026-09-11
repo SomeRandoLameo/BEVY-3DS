@@ -47,3 +47,10 @@ pub fn ok(func: &str, input: &str, expected: &str, got: &str, pass: bool) {
     line(func, input, expected, got, pass);
     assert!(pass, "{func} [{input}]: expected {expected}, got {got}");
 }
+
+/// Boolean check: `expected = "true"`, got = the value.
+#[track_caller]
+pub fn is_true(func: &str, input: &str, got: bool) {
+    line(func, input, "true", if got { "true" } else { "false" }, got);
+    assert!(got, "{func} [{input}]: expected true");
+}

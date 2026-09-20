@@ -6,12 +6,12 @@ On-device Check, dass **`bevy_ecs`** — das Herzstück von Bevy, `World`/`Entit
 |---|---|
 | Bevy-Einheit | `bevy_ecs` |
 | Version | `0.19.1` |
-| Features | `default-features = false`, `features = ["std"]` |
+| Features | `default-features = false`, `features = ["std"]`, + `multi_threaded` (Crate-Default seit 2026-09-20, s. u.) |
 | Target | `armv6k-nintendo-3ds` |
 | Toleranz | exakte Werte-/Strukturvergleiche (`Debug`/`PartialEq`-Derives); keine Fließkomma-Toleranz nötig — die einzigen `f32`-Werte sind exakt darstellbare Test-Literale |
-| Stand | 2026-09-11 · Azahar-Emulator · **75/75 Testfunktionen · 135/135 Checks bestanden** |
+| Stand | 2026-09-20 · Azahar-Emulator · **80/80 Testfunktionen · 145/145 Checks bestanden** (Default-Build, inkl. Threading) |
 
-Ausführen: `./scripts/test-emulator.sh -p bevy-ecs-check` (GDB) oder `./scripts/send-tests.sh bevy-ecs-check` (interaktiv, echte Hardware/Emulator).
+Ausführen: `./scripts/test-emulator.sh -p bevy-ecs-check` (GDB) oder `./scripts/send-tests.sh bevy-ecs-check` (interaktiv, echte Hardware/Emulator) — `multi_threaded` ist Crate-Default, läuft also ohne extra Flag mit. Zum Vergleich ohne Threading: `--no-default-features --features std`.
 
 ## Warum diese Crate überhaupt testen?
 
@@ -563,8 +563,31 @@ Funktion · Eingabe · Erwartet · **tatsächliche Ausgabe** · OK. Reihenfolge 
 |`… Query count matches` |  | `5` | `5` | ✅ |
 |`… last entity's Position` |  | `Position { x: 4.0, y: 0.0 }` | `Position { x: 4.0, y: 0.0 }` | ✅ |
 
+## Threading (Crate-Default seit 2026-09-20)
+
+Läuft standardmäßig mit — kein extra Flag mehr nötig (bis 2026-09-20 war es ein Opt-in `--features multi_threaded`; siehe `git log` für die alte Abgrenzung). Zieht `bevy_tasks`' `async-executor`/`concurrent-queue`/`async-channel` und schaltet `bevy_ecs`'s `default_executor()` von `SingleThreadedExecutor` auf `MultiThreadedExecutor` um. Das matcht normales Bevy: die `bevy`-Umbrella-Crate hat `multi_threaded` selbst standardmäßig an (nur die einzelnen Sub-Crates `bevy_ecs`/`bevy_tasks` *allein* defaulten auf single-threaded) — jetzt auch hier, sowohl in `dove` selbst (`Cargo.toml`, `App::new()` + `TaskPoolPlugin`) als auch in dieser Check-Crate und in `crates/all-checks`. Beantwortet port.md §B1/§B2 (der bisher als "harter Block" eingestufte Risikobereich): **echte OS-Threads über `pthread-3ds` funktionieren auf `armv6k-nintendo-3ds`**, ohne dass an `pthread-3ds` selbst etwas gepatcht werden musste. Zum Vergleich ohne Threading: `--no-default-features --features std`.
+
+`crates/bevy-ecs-check/src/checks/threading.rs`, `./scripts/test-emulator.sh -p bevy-ecs-check`. **5/5 Testfunktionen · 10/10 Checks bestanden** (Teil der 80/80 Default-Gesamtzahl oben).
+
+| Funktion | Eingabe | Erwartet | Ausgabe | OK |
+|---|---|---|---|---|
+|`std::thread::spawn() + join() returns the closure's value` | 1 + 1 | `2` | `2` | ✅ |
+|`… and the closure actually ran (not skipped/no-op'd)` |  | `true` | `true` | ✅ |
+|`ComputeTaskPool::get_or_init() yields a pool with >= 1 real thread` | num_threads(2) requested somewhere in this binary | `true` | `true` | ✅ |
+|`5 schedule.run()s through the MultiThreadedExecutor: CounterA` | 2 non-conflicting systems/run | `5` | `5` | ✅ |
+|`… CounterB` |  | `5` | `5` | ✅ |
+|`Query::par_iter() across 200 entities on a real TaskPool` | sum(1..=200) | `20100` | `20100` | ✅ |
+|`30 rounds of Query::par_iter_mut() across 50 entities: every counter == 30` | no deadlock, no lost update | `true` | `true` | ✅ |
+
+Abgedeckt: `std::thread::spawn`/`join` (der rohe `pthread-3ds`-Unterbau), `ComputeTaskPool::get_or_init` mit einer für die 3DS-Kernzahl expliziten `TaskPoolBuilder::num_threads(2)` (`std::thread::available_parallelism()` ist auf diesem Target praktisch nutzlos — fällt auf 1 zurück, siehe unten), `Schedule::default()`'s automatische `MultiThreadedExecutor`-Wahl mit zwei nicht-konfligierenden Systemen über mehrere `run()`-Aufrufe, `Query::par_iter()`/`par_iter_mut()` (die echte Parallel-Query-Iteration, über `TaskPool::scope` batched) über 200 bzw. 50 Entities, 30 Wiederholungsrunden als Deadlock-/Race-Stichprobe (jeder Counter muss exakt 30 sein — ein verlorenes Update oder ein Deadlock wäre hier sichtbar).
+
+- **`ComputeTaskPool` ist ein prozessweiter `OnceLock`.** Wer zuerst `get_or_init()` aufruft, gewinnt für den Rest des Prozesses — deshalb prüft `compute_task_pool_initializes_with_a_real_thread_pool` nur `thread_num() >= 1`, nicht exakt `== 2`: welcher Test zuerst läuft, ist von der Testreihenfolge des Runners abhängig, nicht garantiert.
+- **`std::thread::available_parallelism()` ist auf `armv6k-nintendo-3ds` faktisch ungestützt** — `bevy_tasks::available_parallelism()` fängt den Fehler ab und fällt auf `1` zurück (kein Panic, aber auch keine automatische 2-Kern-Erkennung). Für echte Parallelität also immer explizit `TaskPoolBuilder::num_threads(...)` setzen, wie port.md es schon vermutet hatte ("Kein automatisches num_cpus-Sizing").
+- **`Query::par_iter()`/`par_iter_mut()` ruft intern `ComputeTaskPool::get()` auf — nicht `get_or_init()`.** Ohne eine vorherige `ComputeTaskPool::get_or_init()`-Initialisierung irgendwo im Prozess **panickt** das. Alle Tests hier rufen deshalb zuerst `ensure_compute_task_pool()`.
+- **Nicht abgedeckt / weiterhin offen:** echte Parallelität/Contention auf **Hardware** (der Emulator emuliert nicht notwendigerweise reale ARM11-Zweikern-Nebenläufigkeit inkl. Cache-Kohärenz-Timing — siehe port.md §B1 zum 64-Bit-Atomic-Fallback-Lock), `AsyncComputeTaskPool`/`IoTaskPool` (nur `ComputeTaskPool` getestet), explizite `TaskPool::scope`-Nutzung außerhalb von `bevy_ecs`s eigenen Aufrufern, System-Konflikt-Erkennung unter dem parallelen Executor mit tatsächlich konfligierenden Systemen (nur der Erfolgsfall mit zwei disjunkten Resources getestet — die Konflikt-Erkennung selbst ist Scheduling-Logik, die für beide Executor-Varianten identisch ist und schon über die Kompilierung/`Schedule::initialize` abgesichert wird), Lang-/Dauerlauf unter Last (§B7).
+
 ## Nicht abgedeckt
 
-`bevy_ecs`'s Reflection-Integration (`bevy_reflect`-Feature), Multi-Threading/`Parallel`-Query-Iteration (Systemzeit auf dem 3DS ist effektiv single-threaded für diese Tests), `System`-Piping (`.pipe(...)`), `EntityHashMap`/`EntityHashSet` direkt (nur indirekt über `Vec<Entity>`-Vergleiche genutzt), Serialisierung (`bevy_ecs` hat dafür ohnehin kein eigenes Feature ohne `bevy_reflect`), Observer-Propagation über `EntityEvent`/Bubbling (nur direktes `World::trigger` getestet), `SubApp`s (die leben in `bevy_app`, nicht `bevy_ecs`).
+`bevy_ecs`'s Reflection-Integration (`bevy_reflect`-Feature), `System`-Piping (`.pipe(...)`), `EntityHashMap`/`EntityHashSet` direkt (nur indirekt über `Vec<Entity>`-Vergleiche genutzt), Serialisierung (`bevy_ecs` hat dafür ohnehin kein eigenes Feature ohne `bevy_reflect`), Observer-Propagation über `EntityEvent`/Bubbling (nur direktes `World::trigger` getestet), `SubApp`s (die leben in `bevy_app`, nicht `bevy_ecs`).
 
 **Caveat:** nur Emulator (Azahar). Echte Hardware ungeprüft, siehe `../../port.md`.

@@ -10,15 +10,21 @@ Right now it runs a swarm of rainbow triangles, simulated by a real
 [`bevy_app`](https://docs.rs/bevy_app) `App` instead of a bare `World` +
 `Schedule`: `App::new()` (**not** `App::default()`'s `DefaultPlugins` cousin —
 that needs `bevy_render`/`bevy_winit`, which don't exist for this target) plus
-exactly one plugin, [`bevy_time`](https://docs.rs/bevy_time)'s `TimePlugin`,
-pinned to `TimeUpdateStrategy::ManualDuration` so the clock advances by a fixed
-step every `app.update()` instead of calling `Instant::now()` (whether that's
-accurate on real 3DS hardware is still unverified — see
-`crates/bevy-time-check`). `main()` calls `app.update()` once per frame; that
-runs the same `First → PreUpdate → RunFixedMainLoop → Update → PostUpdate →
-Last` schedule pipeline already proven on-device by `bevy-transform-check`'s
-and `bevy-time-check`'s own `App`-based tests, now driving a real interactive
-loop. Every triangle is a [`bevy_ecs`](https://docs.rs/bevy_ecs) entity
+`TaskPoolPlugin` (sized to 2 threads for the 3DS's usable cores —
+`bevy_tasks::available_parallelism()` isn't meaningfully supported on this
+target, see `crates/bevy-ecs-check`), [`bevy_time`](https://docs.rs/bevy_time)'s
+`TimePlugin` pinned to `TimeUpdateStrategy::ManualDuration` so the clock
+advances by a fixed step every `app.update()` instead of calling
+`Instant::now()` (whether that's accurate on real 3DS hardware is still
+unverified — see `crates/bevy-time-check`), and our own systems. `main()`
+calls `app.update()` once per frame; that runs the same `First → PreUpdate →
+RunFixedMainLoop → Update → PostUpdate → Last` schedule pipeline already
+proven on-device by `bevy-transform-check`'s and `bevy-time-check`'s own
+`App`-based tests, now driving a real interactive loop — over
+[`bevy_ecs`](https://docs.rs/bevy_ecs)'s `MultiThreadedExecutor` (on by
+default, matching normal Bevy's own default posture; real threads via
+`pthread-3ds`, no patch needed — see `crates/bevy-ecs-check`'s "Threading"
+section). Every triangle is a `bevy_ecs` entity
 `(Body, Spin, Pulse, Tint)` with [`bevy_math`](https://docs.rs/bevy_math)
 `Vec2` positions and a [`bevy_color`](https://docs.rs/bevy_color) `Hsla` hue
 that spins over time (`Hue::rotate_hue`) and gets baked to `Srgba` corner
@@ -50,8 +56,10 @@ time by `citro3d`'s `include_shader!` macro (which shells out to devkitPro's
 `picasso`). `bevy_ecs`, `bevy_math`, `bevy_color`, `bevy_time` and `bevy_app`
 are all `default-features = false, features = ["std"]` — no `bevy_reflect` on
 any of them, no `rand`/`curve` on `bevy_math`, no `serialize` on `bevy_color` —
-see `crates/bevy-ecs-check`/`bevy-math-check`/`bevy-color-check`/
-`bevy-time-check`/`bevy-transform-check` for why that works on the 3DS.
+except `bevy_ecs`, which also has `multi_threaded` on (matching normal Bevy's
+own default, see above). See `crates/bevy-ecs-check`/`bevy-math-check`/
+`bevy-color-check`/`bevy-time-check`/`bevy-transform-check` for why that
+works on the 3DS.
 `bevy_math` pulls its own `glam` 0.32 alongside `citro3d`'s `glam` 0.30; the
 two coexist and we only touch `bevy_math`'s.
 
@@ -114,24 +122,41 @@ Put any files the app loads at runtime in `romfs/`.
 
   | crate | Bevy unit | version | result |
   |---|---|---|---|
-  | `bevy-ecs-check` | `bevy_ecs` (`std`, no reflect/threads) | 0.19.1 | 135/135 checks ✅ (whole public API: World, Commands, Queries, Change Detection, Resources, Components/Bundles, Relationships, Messages, Observers, Schedules) |
+  | `bevy-ecs-check` | `bevy_ecs` (`std`, no reflect, `multi_threaded` on by default) | 0.19.1 | 145/145 checks ✅ (whole public API: World, Commands, Queries, Change Detection, Resources, Components/Bundles, Relationships, Messages, Observers, Schedules, **and threading** — real `std::thread`s over `pthread-3ds`, `ComputeTaskPool`, `MultiThreadedExecutor`, `Query::par_iter` — see caveat below) |
   | `bevy-math-check` | `bevy_math` + `glam` 0.32 + `rand` (`std`, `curve`, `rand`) | 0.19.1 | 488/488 checks ✅ (≈ whole public API) |
-  | `bevy-transform-check` | `bevy_transform` (+`bevy_ecs`/`bevy_app`, `std`, `bevy-support`) | 0.19.1 | 129/129 checks ✅ (whole public API + `App::update()`) |
+  | `bevy-transform-check` | `bevy_transform` (+`bevy_ecs`/`bevy_app`, `std`, `bevy-support`) | 0.19.1 | 129/129 checks ✅ (whole public API + `App::update()`) — `--features multi_threaded` ❌ doesn't compile on this target (upstream bug, see caveat below) |
   | `bevy-color-check` | `bevy_color` (`std`, no reflect/serialize) | 0.19.1 | 381/381 checks ✅ (every color space + conversion graph) |
   | `bevy-time-check` | `bevy_time` (+`bevy_app`/`bevy_ecs`/`bevy_platform`, `std`) | 0.19.1 | 161/161 checks ✅ (whole public API, deterministic — see caveat below) |
   | `bevy-ptr-check` | `bevy_ptr` (no deps, no features) | 0.19.1 | 69/69 checks ✅ (whole public API, incl. a real unaligned-read check on ARMv6) |
 
   `crates/all-checks` bundles every check crate's `#[test]`s into a **single**
-  on-device test binary (300 test functions total as of this writing) via
-  `#[path]`, so `./scripts/send-tests.sh all` sends the whole suite as one app
-  instead of one per crate.
+  on-device test binary (305 test functions total as of this writing,
+  `multi_threaded` included by default) via `#[path]`, so
+  `./scripts/send-tests.sh all` sends the whole suite as one app instead of
+  one per crate.
 
   Findings, caveats and the full port classification live in `port.md`
   (`bevy_ecs` §B1–§B4/§B14, `bevy_math` §B9, `bevy_transform`
   §B10, `bevy_color` §B11, `bevy_time` §B12, `bevy_ptr` §B13). `bevy-time-check`
   drives every clock deterministically (`TimeUpdateStrategy`/`advance_by`)
   rather than the real wall clock — whether `Instant::now()` behaves on real
-  3DS **hardware** stays an open question (§B6).
+  3DS **hardware** stays an open question (§B6). `multi_threaded` — on by
+  default since 2026-09-20, matching normal Bevy's own default posture —
+  answers what was previously the project's biggest known risk (§B1/§B2):
+  real OS threads via `pthread-3ds` — `std::thread`, `ComputeTaskPool`,
+  `Schedule`'s automatic `MultiThreadedExecutor`, `Query::par_iter`/
+  `par_iter_mut` — all work correctly in the emulator with **no `pthread-3ds`
+  patch needed**, both in the check crates and in `dove` itself (`App::new()`
+  + `TaskPoolPlugin` in `src/main.rs`, plus a `std::thread::scope`-parallelized
+  render loop). **Confirmed on real hardware too**, with a catch: New 3DS
+  showed a real speedup (9.7 → 19fps peak at 8k triangles); Old 3DS showed
+  none, traced to its second core needing an explicit `Apt::
+  set_app_cpu_time_limit()` call before homebrew gets any time on it (now
+  added, not yet re-verified on hardware) — see §B2. `bevy_transform`'s own
+  `multi_threaded` (parallel propagation), on the other hand, **doesn't even
+  compile** on this target — an upstream bug (hardcoded
+  `core::sync::atomic::AtomicU64` instead of `bevy_platform`'s portable
+  shim) — see §B10-Threading.
 
 - `crates/test-console` — an interactive `#![test_runner]` for the 3DS. Build a
   check crate's tests with `--features console` and the **test list appears on

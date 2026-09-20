@@ -20,7 +20,7 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-ip="${DOVE_3DS_IP:-192.168.2.181}"
+ip="${DOVE_3DS_IP:-192.168.2.167}"
 profile="debug"
 cargo_args=()        # passthrough to `cargo run` (must follow --release/-p)
 server_flag=()

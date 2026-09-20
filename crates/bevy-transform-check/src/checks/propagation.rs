@@ -1,5 +1,7 @@
 //! The propagation pipeline: `mark_dirty_trees` → `propagate_parent_transforms`
-//! → `sync_simple_transforms`. Runs the **serial fallbacks** (no `multi_threaded`).
+//! → `sync_simple_transforms`. Runs the **serial fallbacks** (no `multi_threaded`
+//! — the parallel path currently doesn't even compile on this target, see
+//! `Cargo.toml`'s `multi_threaded` feature doc and port.md §B2/§B10-Threading).
 
 use super::{gt_translation, near3, report, world_with_propagation};
 use bevy_ecs::prelude::*;

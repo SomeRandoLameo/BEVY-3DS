@@ -1,46 +1,56 @@
-| Crate | Einstufung | Begründung | getestet |
-|---|---|---|---|
-| bevy_ecs | Sicher (core, 1 Thread) | Core-ECS = reine Logik/Daten. Aber: nicht "platformfrei" — Entity-Allocator nutzt 64-bit-Atomics (Fallback, §B1), `thread_local!`, optionaler Parallel-Executor. | ✅ **135/135 Checks** (75 Testfn, Emu, `crates/bevy-ecs-check`) — gesamte öffentliche API: `World`, `Commands`, Queries + alle Filter, Change Detection, Resources, Components/Bundles/`#[require(...)]`, `ChildOf`/`Children`, Messages (ex-`Events`), Observers, Schedules/`run_if`/`SystemSet`. Liste → `crates/bevy-ecs-check/README.md`, Überblick §B14 |
-| bevy_math | Sicher | glam-Reexport + Bevy-Primitives. Zieht **glam 0.32** neben citro3ds glam 0.30 (koexistieren, §B8), `scalar`-Backend (kein NEON). `rand`-Feature baut auf 3DS (kein `getrandom`, §B9). | ✅ **488/488 Checks** (57 Testfn, Emu, `crates/bevy-math-check`) — quasi die ganze öffentliche API. Vollständige Liste → `crates/bevy-math-check/README.md`, Überblick §B9 |
-| bevy_transform | Sicher (1 Thread) | Mathe + Hierarchie. Propagation nutzt `par_iter`/`ComputeTaskPool` — hat aber ohne `multi_threaded` **explizite serielle Fallbacks** (`serial`-Modul, `iter_mut`-Branches). Die laufen korrekt (§B10). | ✅ **129/129 Checks** (38 Testfn, Emu) — ganze öffentliche API inkl. Propagation, `TransformHelper`, `BuildChildrenTransformExt`, `TransformPlugin`/`App::update()`. Liste → `crates/bevy-transform-check/README.md`, Überblick §B10 |
-| bevy_ptr | Sicher | keine Platform-Annahmen; fast ausschließlich `unsafe`-Zeigercode (Typ-Erasure, `Aligned`/`Unaligned`-Zugriffe) — genau die Art Code, bei der ARM-Alignment relevant werden könnte | ✅ **69/69 Checks** (39 Testfn, Emu, `crates/bevy-ptr-check`) — gesamte öffentliche API inkl. eines echten unausgerichteten `u32`-Reads auf `armv6k`. Liste → `crates/bevy-ptr-check/README.md`, Überblick §B13 |
-| bevy_utils | Sicher | keine Platform-Annahmen | ✅ baut (transitiv) |
-| bevy_platform | Sicher (mit Fallbacks) | **ist** die Platform-Abstraktion: Atomic-Shim (64-bit → `portable-atomic` Fallback), `Instant`, sync-Primitive. Baut für 3DS. | ✅ baut (transitiv) |
-| bevy_derive | Sicher | Makros, keine Runtime-Abhängigkeit ||
-| bevy_macro_utils | Sicher | Makros, keine Runtime-Abhängigkeit ||
-| bevy_color | Sicher | reine Farbraum-Mathe | ✅ **381/381 Checks** (44 Testfn, Emu, `crates/bevy-color-check`) — jeder Farbraum + Konversionsgraph. Liste → `crates/bevy-color-check/README.md`, Überblick §B11. Auch **im Demo verbaut** (`Tint`/`Hue::rotate_hue`, Emu-verifiziert, s. u.) |
-| bevy_time | Sicher (deterministischer Kern) | Baut, `App::update()` mit `TimePlugin` läuft. `bevy_platform::Instant` → `std::time::Instant`. Ob `Instant::now()` auf **3DS-Hardware** akkurat/monoton liefert, ist weiterhin UNGEPRÜFT — im Demo läuft `TimePlugin` jetzt mit, aber fest auf `TimeUpdateStrategy::ManualDuration` gepinnt, sodass es nie `Instant::now()` aufruft (die FPS-Anzeige nutzt weiterhin direkt `svcGetSystemTick`, §B6). | ✅ **161/161 Checks** (47 Testfn, Emu, `crates/bevy-time-check`) — gesamte öffentliche API, komplett deterministisch (`TimeUpdateStrategy`/`advance_by`, keine echte Wanduhr außer einem einzelnen `Instant::now()`-Sanity-Check). Liste → `crates/bevy-time-check/README.md`, Überblick §B12. **Im Demo verbaut:** `TimePlugin` unter `App::new()`, `ManualDuration(DT)` als Sim-Uhr (ersetzt das handgerollte `SimTime`), Emu-verifiziert inkl. echtem `app.update()`-Loop. `Instant` auf HW weiterhin ✗ |
-| bevy_app | Sicher (Kern) | Runner passt nicht, `App::update()` manuell nötig. `App::new().add_plugins(...)` + **`app.update()` läuft auf dem 3DS** — jetzt auch als echter interaktiver Loop im Demo, nicht nur in Tests (via `bevy-transform-check` §B10). Eigener `bevy-app-check` noch offen (SubApps, Plugin-Ordering, `AppExit`). | ✅ `update()` (Emu, Tests + Demo-Loop, 60×/s) |
-| bevy_state | Wahrscheinlich okay | reine State-Machine-Logik ||
-| bevy_diagnostic | Wahrscheinlich okay | evtl. OS-Metriken disablen ||
-| bevy_asset | Riskant | Async-Loader, Thread-Pool-Abhängigkeit ||
-| bevy_tasks | Riskant | **Nicht-optionale Dep von bevy_ecs** — baut + linkt schon jetzt (single-threaded Form). `multi_threaded` zieht `async-executor` + `concurrent-queue` und echte Threads → §B2. | ⚠️ baut single-thread; `multi_threaded` ✗ |
-| bevy_reflect | Riskant | schwergewichtig, Compile-Zeit/Binary-Size. `uuid`-Feature-Pfade können `getrandom` ziehen → §"Plattform-Fakten". Gate für app/scene/state/asset. ||
-| bevy_scene | Riskant | hängt an reflect ||
-| bevy_gltf | Riskant | hängt an Asset/Mesh/Image-Pipeline ||
-| bevy_mesh | Riskant | Datenstruktur ok, aber eng an render gekoppelt ||
-| bevy_animation | Riskant | hängt an curve, evtl. isolierbar ||
-| bevy_render | Ausgeschlossen | wgpu-gebunden ||
-| bevy_core_pipeline | Ausgeschlossen | wgpu-gebunden ||
-| bevy_pbr | Ausgeschlossen | wgpu-gebunden ||
-| bevy_sprite | Ausgeschlossen | wgpu-gebunden ||
-| bevy_sprite_render | Ausgeschlossen | wgpu-gebunden ||
-| bevy_ui | Ausgeschlossen | wgpu-gebunden ||
-| bevy_ui_render | Ausgeschlossen | wgpu-gebunden ||
-| bevy_ui_widgets | Ausgeschlossen | wgpu-gebunden ||
-| bevy_window | Ausgeschlossen | Desktop-Fenstersystem ||
-| bevy_winit | Ausgeschlossen | Desktop-Fenstersystem ||
-| bevy_camera | Ausgeschlossen | render-gekoppelt ||
-| bevy_light | Ausgeschlossen | render-gekoppelt ||
-| bevy_material | Ausgeschlossen | render-gekoppelt ||
-| bevy_image | Ausgeschlossen | GPU-Upload-Pfad ||
-| bevy_gizmos | Ausgeschlossen | render-gekoppelt ||
-| bevy_picking | Ausgeschlossen | Desktop-Input ||
-| bevy_input_focus | Ausgeschlossen | Desktop-Input ||
-| bevy_text | Ausgeschlossen | render-gekoppelt ||
-| bevy_audio | Ausgeschlossen | cpal statt 3DS-Audio-API ||
-| bevy_android | Ausgeschlossen | irrelevante Plattform ||
-| bevy_gilrs | Ausgeschlossen | irrelevante Plattform ||
+| Crate | Einstufung | Begründung | getestet | % |
+|---|---|---|---|---|
+| bevy_ecs | Sicher (core + Multi-Threaded-Executor) | Core-ECS = reine Logik/Daten. Aber: nicht "platformfrei" — Entity-Allocator nutzt 64-bit-Atomics (Fallback, §B1), `thread_local!`, Parallel-Executor jetzt Crate-Default (§B2). | ✅ **145/145 Checks** (80 Testfn, Emu, `crates/bevy-ecs-check`) — gesamte öffentliche API: `World`, `Commands`, Queries + alle Filter, Change Detection, Resources, Components/Bundles/`#[require(...)]`, `ChildOf`/`Children`, Messages (ex-`Events`), Observers, Schedules/`run_if`/`SystemSet`, **und Threading** (§B14-Threading). Liste → `crates/bevy-ecs-check/README.md`, Überblick §B14 | 100% |
+| bevy_math | Sicher | glam-Reexport + Bevy-Primitives. Zieht **glam 0.32** neben citro3ds glam 0.30 (koexistieren, §B8), `scalar`-Backend (kein NEON). `rand`-Feature baut auf 3DS (kein `getrandom`, §B9). | ✅ **488/488 Checks** (57 Testfn, Emu, `crates/bevy-math-check`) — quasi die ganze öffentliche API. Vollständige Liste → `crates/bevy-math-check/README.md`, Überblick §B9 | 90% |
+| bevy_transform | Sicher (1 Thread); `multi_threaded` ✗ | Mathe + Hierarchie. Propagation nutzt `par_iter`/`ComputeTaskPool` — hat aber ohne `multi_threaded` **explizite serielle Fallbacks** (`serial`-Modul, `iter_mut`-Branches). Die laufen korrekt (§B10). Der parallele Pfad selbst **kompiliert nicht** auf diesem Target — Upstream-Bug, §B10-Threading. | ✅ **129/129 Checks** (38 Testfn, Emu) — ganze öffentliche API inkl. Propagation, `TransformHelper`, `BuildChildrenTransformExt`, `TransformPlugin`/`App::update()`. Liste → `crates/bevy-transform-check/README.md`, Überblick §B10. ❌ `multi_threaded`: `error[E0425]` (`AtomicU64` fehlt), §B10-Threading | 70% |
+| bevy_ptr | Sicher | keine Platform-Annahmen; fast ausschließlich `unsafe`-Zeigercode (Typ-Erasure, `Aligned`/`Unaligned`-Zugriffe) — genau die Art Code, bei der ARM-Alignment relevant werden könnte | ✅ **69/69 Checks** (39 Testfn, Emu, `crates/bevy-ptr-check`) — gesamte öffentliche API inkl. eines echten unausgerichteten `u32`-Reads auf `armv6k`. Liste → `crates/bevy-ptr-check/README.md`, Überblick §B13 | 100% |
+| bevy_utils | Sicher | keine Platform-Annahmen | ✅ baut (transitiv) | 20% |
+| bevy_platform | Sicher (mit Fallbacks) | **ist** die Platform-Abstraktion: Atomic-Shim (64-bit → `portable-atomic` Fallback), `Instant`, sync-Primitive. Baut für 3DS. | ✅ baut (transitiv) | 20% |
+| bevy_derive | Sicher | Makros, keine Runtime-Abhängigkeit || 20% |
+| bevy_macro_utils | Sicher | Makros, keine Runtime-Abhängigkeit || 20% |
+| bevy_color | Sicher | reine Farbraum-Mathe | ✅ **381/381 Checks** (44 Testfn, Emu, `crates/bevy-color-check`) — jeder Farbraum + Konversionsgraph. Liste → `crates/bevy-color-check/README.md`, Überblick §B11. Auch **im Demo verbaut** (`Tint`/`Hue::rotate_hue`, Emu-verifiziert, s. u.) | 100% |
+| bevy_time | Sicher (deterministischer Kern) | Baut, `App::update()` mit `TimePlugin` läuft. `bevy_platform::Instant` → `std::time::Instant`. Ob `Instant::now()` auf **3DS-Hardware** akkurat/monoton liefert, ist weiterhin UNGEPRÜFT — im Demo läuft `TimePlugin` jetzt mit, aber fest auf `TimeUpdateStrategy::ManualDuration` gepinnt, sodass es nie `Instant::now()` aufruft (die FPS-Anzeige nutzt weiterhin direkt `svcGetSystemTick`, §B6). | ✅ **161/161 Checks** (47 Testfn, Emu, `crates/bevy-time-check`) — gesamte öffentliche API, komplett deterministisch (`TimeUpdateStrategy`/`advance_by`, keine echte Wanduhr außer einem einzelnen `Instant::now()`-Sanity-Check). Liste → `crates/bevy-time-check/README.md`, Überblick §B12. **Im Demo verbaut:** `TimePlugin` unter `App::new()`, `ManualDuration(DT)` als Sim-Uhr (ersetzt das handgerollte `SimTime`), Emu-verifiziert inkl. echtem `app.update()`-Loop. `Instant` auf HW weiterhin ✗ | 90% |
+| bevy_app | Sicher (Kern) | Runner passt nicht, `App::update()` manuell nötig. `App::new().add_plugins(...)` + **`app.update()` läuft auf dem 3DS** — jetzt auch als echter interaktiver Loop im Demo, nicht nur in Tests (via `bevy-transform-check` §B10). Eigener `bevy-app-check` noch offen (SubApps, Plugin-Ordering, `AppExit`). | ✅ `update()` (Emu, Tests + Demo-Loop, 60×/s) | 50% |
+| bevy_state | Wahrscheinlich okay | reine State-Machine-Logik || 0% |
+| bevy_diagnostic | Wahrscheinlich okay | evtl. OS-Metriken disablen || 0% |
+| bevy_asset | Riskant | Async-Loader, Thread-Pool-Abhängigkeit || 0% |
+| bevy_tasks | Sicher (Emu, HW offen) | **Nicht-optionale Dep von bevy_ecs.** `multi_threaded` (zieht `async-executor` + `concurrent-queue` + echte Threads) ist seit 2026-09-20 **Crate-Default** in `dove` selbst und allen `bevy-*-check`-Crates, matcht normales Bevys eigenen Default → §B2. | ✅ **10/10 Checks** (5 Testfn, Emu, `crates/bevy-ecs-check`, Default-Build) — `std::thread`/`ComputeTaskPool`/`MultiThreadedExecutor`/`Query::par_iter` laufen korrekt über `pthread-3ds`, kein Patch nötig. Überblick §B2/§B14-Threading. Echte HW-Contention ungeprüft | 50% |
+| bevy_reflect | Riskant | schwergewichtig, Compile-Zeit/Binary-Size. `uuid`-Feature-Pfade können `getrandom` ziehen → §"Plattform-Fakten". Gate für app/scene/state/asset. || 0% |
+| bevy_scene | Riskant | hängt an reflect || 0% |
+| bevy_gltf | Riskant | hängt an Asset/Mesh/Image-Pipeline || 0% |
+| bevy_mesh | Riskant | Datenstruktur ok, aber eng an render gekoppelt || 0% |
+| bevy_animation | Riskant | hängt an curve, evtl. isolierbar || 0% |
+| bevy_render | Ausgeschlossen | wgpu-gebunden || 0% |
+| bevy_core_pipeline | Ausgeschlossen | wgpu-gebunden || 0% |
+| bevy_pbr | Ausgeschlossen | wgpu-gebunden || 0% |
+| bevy_sprite | Ausgeschlossen | wgpu-gebunden || 0% |
+| bevy_sprite_render | Ausgeschlossen | wgpu-gebunden || 0% |
+| bevy_ui | Ausgeschlossen | wgpu-gebunden || 0% |
+| bevy_ui_render | Ausgeschlossen | wgpu-gebunden || 0% |
+| bevy_ui_widgets | Ausgeschlossen | wgpu-gebunden || 0% |
+| bevy_window | Ausgeschlossen | Desktop-Fenstersystem || 0% |
+| bevy_winit | Ausgeschlossen | Desktop-Fenstersystem || 0% |
+| bevy_camera | Ausgeschlossen | render-gekoppelt || 0% |
+| bevy_light | Ausgeschlossen | render-gekoppelt || 0% |
+| bevy_material | Ausgeschlossen | render-gekoppelt || 0% |
+| bevy_image | Ausgeschlossen | GPU-Upload-Pfad || 0% |
+| bevy_gizmos | Ausgeschlossen | render-gekoppelt || 0% |
+| bevy_picking | Ausgeschlossen | Desktop-Input || 0% |
+| bevy_input_focus | Ausgeschlossen | Desktop-Input || 0% |
+| bevy_text | Ausgeschlossen | render-gekoppelt || 0% |
+| bevy_audio | Ausgeschlossen | cpal statt 3DS-Audio-API || 0% |
+| bevy_android | Ausgeschlossen | irrelevante Plattform || 0% |
+| bevy_gilrs | Ausgeschlossen | irrelevante Plattform || 0% |
+
+`%` = geschätzter Anteil der Crate, der auf diesem Target tatsächlich on-device
+getestet UND bestätigt funktionsfähig ist (nicht: Anteil bestandener Checks —
+die sind per Definition immer 100%, weil kaputte Tests hier repariert statt
+stehen gelassen werden). 100% = eigene Check-Crate deckt die gesamte
+öffentliche API ab, alles grün, keine bekannten Lücken. Abzüge für: bekannte
+Teil-Lücken trotz "ganzer API" (90%), einen bestätigt kaputten/ungetesteten
+Subsystem-Zweig wie `multi_threaded` bei `bevy_transform` (70%), nur den Kern
+statt einer dedizierten Check-Crate getestet (50%), nur transitiv gebaut ohne
+jeden Funktionstest (20%), gar nicht angefasst bzw. bewusst ausgeschlossen (0%).
 
 ---
 
@@ -124,7 +134,8 @@ Vehikel für weitere isolierte Tests: **`crates/bevy-ecs-check`**,
 **`crates/bevy-color-check`**, **`crates/bevy-time-check`**,
 **`crates/bevy-ptr-check`** (jeweils ohne citro3d im Baum, on-device via
 `./scripts/test-emulator.sh -p <crate>`; `crates/all-checks` bündelt alle
-sechs in eine `.3dsx`, **300/300 Testfunktionen** bestanden im Emulator).
+sechs in eine `.3dsx`, **305/305 Testfunktionen** bestanden im Emulator —
+Default-Build, `multi_threaded` inklusive, s. §B2/§B14-Threading).
 
 ### Plattform-Fakten `armv6k-nintendo-3ds`
 
@@ -138,9 +149,14 @@ sechs in eine `.3dsx`, **300/300 Testfunktionen** bestanden im Emulator).
   und baut sauber; man muss nur einen expliziten `RngCore`/`TryRng` liefern (kein `OsRng`).
   Erst Features die `getrandom` *direkt* wollen (`rand/os_rng`, `uuid/v4`, evtl. `rand/thread_rng`)
   brechen den Build — dann `getrandom` „custom"-Backend nötig (`ps:GenerateRandomBytes`).
-- **Threads:** `std::thread` läuft über `pthread-3ds`. Old 3DS: 2 Cores, Core 1 großteils OS
-  (Homebrew bekommt Zeitscheibe); New 3DS: Cores 2+3 frei (804 MHz via `osSetSpeedupEnable`).
-  Kein automatisches `num_cpus`-Sizing — Threadpools **explizit** begrenzen.
+- **Threads:** `std::thread` läuft über `pthread-3ds`. Old 3DS: 2 Cores, Core 1 (der
+  "System-Core") standardmäßig **0% Zeitscheibe für Homebrew** — braucht explizit
+  `Apt::set_app_cpu_time_limit(percent)` (5–89%, empfohlen ~30–45%) **vor** dem ersten
+  Thread-Spawn, sonst laufen alle Worker-Threads auf Core 0 mit (kein Speedup ohne
+  diesen Call — auf Old-3DS-Hardware bestätigt, s. §B2; der Fix selbst noch nicht
+  nachgemessen). New 3DS: Cores 2+3 frei ohne diese Erlaubnis-Prozedur (804 MHz via
+  `osSetSpeedupEnable`). Kein automatisches `num_cpus`-Sizing — Threadpools
+  **explizit** begrenzen.
 - **Zeit:** `std::time::Instant` **nicht auf HW verifiziert** (Demo nutzt `svcGetSystemTick`).
 - **Speicher:** Heap grob Old 3DS ~64–96 MB, New 3DS ~124 MB+. GPU-Buffer via `ctru::linear`
   (LinearAllocator), getrennter Pool.
@@ -158,15 +174,65 @@ sechs in eine `.3dsx`, **300/300 Testfunktionen** bestanden im Emulator).
   64-bit-Atomic-Ops, (b) Spinlock-Holder-Preemption auf 2 Cores → Cycle-Waste / Prioritäts-
   inversion, (c) getornte Reads im Split-Pfad + `compare_exchange`-Retry auf schwach geordnetem
   ARM11 — **nur auf Hardware unter echter Contention validierbar.**
+- **Teilentschärft (§B14-Threading, Emulator):** 30 Runden `Query::par_iter_mut()` über
+  50 Entities (also durchgängige Spawn/Despawn-Allocator-Aktivität unter dem parallelen
+  Executor) liefen ohne falsches Ergebnis oder Deadlock. Sagt nichts über echte
+  Zwei-Kern-Contention/Preemption auf ARM11-Hardware aus (Azahar emuliert das nicht
+  zyklengenau) — (c) bleibt bis zu einem Hardware-Lauf offen.
 
-**§B2 — `multi_threaded` / paralleler Executor / Threadpools.** Gar nicht getestet.
-`bevy_tasks` ist Pflicht-Dep und baut single-threaded; `multi_threaded` aktiviert
-`async-executor` + `concurrent-queue` + echte Threads. `ComputeTaskPool`/`TaskPool` müssen
-mit `TaskPoolBuilder`-Threadzahl an die 3DS-Cores angepasst werden (Default-Sizing greift nicht).
-Kombiniert mit §B1 der Haupt-Risikoblock des ganzen Ports.
+**§B2 — `multi_threaded` / paralleler Executor / Threadpools.**
+**Erledigt (Emulator, §B14-Threading):** `bevy_tasks`' `multi_threaded`-Feature
+(`async-executor`/`concurrent-queue`/`async-channel`) baut und linkt;
+`ComputeTaskPool::get_or_init()` mit explizitem `TaskPoolBuilder::num_threads(2)`
+(bzw. `bevy_app::TaskPoolPlugin { task_pool_options: TaskPoolOptions::
+with_num_threads(2) }` im Demo) erzeugt einen echten Thread-Pool über
+`pthread-3ds`; `Schedule::default()` wählt automatisch den `MultiThreadedExecutor`
+(kein `ExecutorKind`-Opt-in mehr in 0.19) und läuft über mehrere `run()`s korrekt;
+`Query::par_iter()`/`par_iter_mut()` (die gebatchte Parallel-Query-Iteration über
+`TaskPool::scope`) lief über 200 bzw. 50 Entities korrekt, inkl. 30
+Wiederholungsrunden ohne Deadlock oder verlorenes Update. **Kein Patch an
+`pthread-3ds` nötig** — `pthread_create`/`pthread_join`/Mutex/Condvar/TLS
+funktionieren bereits wie erwartet. **Seit 2026-09-20 Crate-Default** — sowohl
+in `dove` selbst (`Cargo.toml`s `bevy_ecs`-Feature, `App::new()` + `TaskPoolPlugin`
+in `src/main.rs`) als auch in `bevy-ecs-check`/`all-checks` (matcht normales
+Bevys eigenen Default; vorher war es ein `--features multi_threaded`-Opt-in).
+`dove`s eigener Demo-Loop (Triangle-Swarm über `app.update()`) lief nach der
+Umstellung fehlerfrei im Emulator (Boot + Laufzeit ohne Crash/Panic geprüft,
+alle 5 `#[test]`s in `src/main.rs` weiterhin grün). Details, Testtabelle und
+offene Punkte: §B14-Threading / `crates/bevy-ecs-check/README.md`
+„Threading"-Abschnitt. **Weiterhin offen:** alles davon auf echter
+**Hardware** (der Emulator validiert Korrektheit, nicht reale
+Zwei-Kern-Nebenläufigkeit/Timing/Contention — s. §B1), `AsyncComputeTaskPool`/
+`IoTaskPool`, echte Systemkonflikt-Serialisierung unter Last, Langlauf (§B7).
+
+**Erster echter Hardware-Befund (2026-09-20, User-Test):** `dove`s eigenes
+Demo (parallelisiert: `drift`/`bounce`/`spin`/`tint` über `Query::par_iter_mut()`,
+der Vertex-Bake-Loop der Render-Schleife über `std::thread::scope` in 2
+Chunks — s. `src/main.rs`) zeigte auf **Old 3DS bei 8k Dreiecken keinen
+Unterschied** (weiterhin 9.7 fps), auf **New 3DS dagegen einen echten
+Sprung** (19 fps Peak bei 8k Dreiecken). Ursache gefunden: Old 3DS' zweiter
+Kern (Core #1, der "System-Core") ist standardmäßig für OS-Dienste reserviert
+— Homebrew bekommt davon 0%, bis `APT_SetAppCpuTimeLimit` explizit eine
+Zeitscheibe anfordert (ctru-rs' eigene Doku zu `Apt::set_app_cpu_time_limit`:
+"It is necessary to set a time limit before spawning threads on the syscore
+(core #1)"). `dove` rief das nie auf — beide Worker-Threads liefen also
+vermutlich beide auf Core 0, kein echter Speedup. New 3DS ist davon nicht
+betroffen (die Extra-Kerne #2/#3 sind frei nutzbar, keine Erlaubnis nötig —
+erklärt, warum dort schon vorher ein Unterschied da war). **Fix:** `main()`
+ruft jetzt `apt.set_app_cpu_time_limit(30)` (ctru-rs' empfohlener Bereich:
+5–89%, "around 30–45%") gleich nach `Apt::new()`, vor `TaskPoolPlugin`/jedem
+Thread-Spawn. Noch nicht auf Old-3DS-Hardware nachgemessen, ob das den fps-
+Unterschied tatsächlich bringt — **Azahar kann das nicht validieren**, der
+Emulator loggt `APT_SetAppCpuTimeLimit` als `(STUBBED)` (kein Effekt in der
+Emulation, nur ein No-op-Erfolg). Das ist ein weiterer konkreter Beleg für die
+Emulator-Grenze aus §B1: für alles, was echte Kern-/Scheduling-Details auf
+Old 3DS angeht, ist nur ein Hardware-Lauf aussagekräftig.
 
 **§B3 — `thread_local!`.** `bevy_ecs` nutzt TLS im Error-Handling (`error/bevy_error.rs`).
-`pthread-3ds` liefert TLS (`has-thread-local = true`), aber nicht funktionsgetestet.
+`pthread-3ds` liefert TLS (`has-thread-local = true`) — durch §B14-Threading indirekt
+mitgetestet (`pthread-3ds`s eigene Thread-ID/Executor-Bücher laufen selbst über
+`#[thread_local]`, und alle Threading-Tests liefen fehlerfrei), aber `bevy_ecs`s
+*eigener* TLS-Pfad im Error-Handling selbst nicht gezielt geprüft.
 
 **§B4 — Kern-APIs jenseits von spawn/despawn/Query/Res (alle single-thread).**
 **Erledigt (§B14, `bevy-ecs-check`):** `Commands` + deferred apply (`world.flush`/
@@ -270,8 +336,31 @@ Abgedeckt (die gesamte öffentliche API):
 - **`bevy_app::App::update()` läuft auf dem 3DS.** `App::new().add_plugins(TransformPlugin)`
   + `app.update()` propagiert korrekt (§B6-Frage für den App-Loop damit teil-beantwortet;
   `bevy_time`/`Instant` weiterhin separat).
-- **Nicht abgedeckt:** `multi_threaded`-Propagation (paralleler Pfad — der harte §B2-Block),
-  sehr breite Hierarchien, `TransformPlugin` mit anderen Plugins kombiniert.
+- **Nicht abgedeckt:** sehr breite Hierarchien, `TransformPlugin` mit anderen Plugins kombiniert.
+
+**§B10-Threading — bevy_transform `multi_threaded`: BLOCKIERT (kompiliert nicht).**
+Im Gegensatz zu `bevy_ecs` (§B2/§B14-Threading, erfolgreich getestet) **kompiliert
+`bevy_transform`s parallele Propagation auf `armv6k-nintendo-3ds` nicht.**
+`bevy_transform::systems`' `mod parallel` (der `ComputeTaskPool`-basierte
+Work-Queue-Tree-Walker mit einem geteilten "dirty subtree"-Bitset über
+`mpsc`-Channels) nutzt für dieses Bitset **direkt** `core::sync::atomic::AtomicU64`
+(`systems.rs:119,177`) — **nicht** `bevy_platform::sync::atomic`s
+Portable-Atomic-Shim, den `bevy_ecs`/`bevy_tasks` korrekt verwenden (genau der
+Mechanismus, der §B1s 64-Bit-Atomic-Problem für `bevy_ecs` bereits entschärft
+hat). Da dieses Target **keine nativen 64-Bit-Atomics** hat, existiert
+`core::sync::atomic::AtomicU64` hier schlicht nicht → `error[E0425]: cannot
+find type 'AtomicU64' in module 'core::sync::atomic'` bei `cargo 3ds build
+--features multi_threaded`. Das ist ein **Upstream-Bug/-Lücke in
+`bevy_transform` 0.19.1** selbst, kein Problem in `dove`s Setup — reproduzierbar
+mit `cargo 3ds test --no-run -p bevy-transform-check --features multi_threaded`.
+Vorbereitete Tests liegen bereit (`crates/bevy-transform-check/src/checks/
+threading.rs`: 40-Wurzeln-Parallelitätstest, 8×15-tiefe Hierarchie,
+25-Runden-Deadlock-Stresstest — spiegeln §B14-Threadings Muster), können aber
+erst laufen, sobald das behoben ist (entweder upstream oder per lokalem
+Patch, analog zum ursprünglich für `pthread-3ds` erwogenen Vorgehen — bei
+`pthread-3ds` hat sich das als unnötig erwiesen, hier wäre es tatsächlich
+nötig). `multi_threaded`-Feature bleibt deshalb bewusst **kein** Crate-Default
+für `bevy-transform-check` (im Gegensatz zu `bevy-ecs-check`/`all-checks`).
 
 **§B11 — bevy_color: Testergebnis (`crates/bevy-color-check`).**
 `bevy_color` 0.19.1, Features `["std"]` (= `alloc` + `bevy_math/std`, **kein**
@@ -400,13 +489,14 @@ Abgedeckt (die gesamte öffentliche API):
   direkt (nur indirekt über `Ptr`/`OwningPtr`/`MovingPtr`).
 
 **§B14 — bevy_ecs: Testergebnis (`crates/bevy-ecs-check`).**
-`bevy_ecs` 0.19.1, Features `["std"]` (**kein** `bevy_reflect`, **kein**
-`multi_threaded`). Lauf: `./scripts/test-emulator.sh -p bevy-ecs-check`.
-**75 / 75 Testfunktionen · 135 / 135 Checks bestanden**, exakte Werte-/
-Strukturvergleiche.
+`bevy_ecs` 0.19.1, Features `["std"]` (**kein** `bevy_reflect`). Lauf:
+`./scripts/test-emulator.sh -p bevy-ecs-check`.
+**80 / 80 Testfunktionen · 145 / 145 Checks bestanden** (Default-Build,
+`multi_threaded` inklusive — s. §B14-Threading unten für die 5 Threading-
+Testfunktionen davon), exakte Werte-/Strukturvergleiche.
 
-→ **Vollständige Liste** (jede Funktion · Eingabe · Erwartet · **tatsächliche Ausgabe** · OK,
-75 Sektionen): **`crates/bevy-ecs-check/README.md`**.
+→ **Vollständige Liste** (jede Funktion · Eingabe · Erwartet · **tatsächliche Ausgabe** · OK):
+**`crates/bevy-ecs-check/README.md`**.
 
 Abgedeckt (die gesamte öffentliche API):
 
@@ -461,15 +551,65 @@ Abgedeckt (die gesamte öffentliche API):
   zu einem System in einem `Schedule` (dessen deferred Params der Executor
   automatisch anwendet) braucht ein Observer nach `World::trigger()` ein
   explizites `World::flush()`, damit seine `Commands` tatsächlich wirken.
-- **Nicht abgedeckt:** `bevy_reflect`-Integration, `multi_threaded`/`Parallel`-
-  Query-Iteration (der §B2-Block), `System`-Piping, `EntityHashMap`/
-  `EntityHashSet` direkt, Observer-Propagation/Bubbling über `EntityEvent`.
+- **Nicht abgedeckt:** `bevy_reflect`-Integration, `System`-Piping,
+  `EntityHashMap`/`EntityHashSet` direkt, Observer-Propagation/Bubbling über
+  `EntityEvent`. (`multi_threaded` war hier der letzte offene Punkt — jetzt
+  separat getestet, s. u.)
+
+**§B14-Threading — bevy_ecs `multi_threaded`: Testergebnis
+(`crates/bevy-ecs-check`).**
+`bevy_ecs`/`bevy_tasks` 0.19.1, `features = ["multi_threaded"]` — seit
+2026-09-20 **Crate-Default** (vorher ein `--features multi_threaded`-Opt-in;
+matcht normales Bevys eigenen Default, s. §B2). Lauf:
+`./scripts/test-emulator.sh -p bevy-ecs-check` (kein extra Flag mehr nötig).
+**5 / 5 Testfunktionen · 10 / 10 Checks bestanden** — beantwortet §B2 (bisher
+"der harte Block") und liefert eine erste Emulator-Datenlage für §B1. Auch in
+`all-checks`s Default-Build verdrahtet (305/305 Testfunktionen dort, s. u.)
+und in `dove` selbst (`App::new()` + `TaskPoolPlugin` in `src/main.rs`,
+Demo-Loop im Emulator gebootet und ohne Crash gelaufen).
+
+→ **Vollständige Liste**: **`crates/bevy-ecs-check/README.md`** Abschnitt „Threading".
+
+Abgedeckt:
+
+| Bereich | Umfang |
+|---|---|
+| `std::thread` | `spawn`/`join`, Rückgabewert + tatsächliche Ausführung verifiziert (der rohe `pthread-3ds`-Unterbau) |
+| `bevy_tasks::ComputeTaskPool` | `get_or_init()` mit explizitem `TaskPoolBuilder::num_threads(2)` |
+| `Schedule` | automatische `MultiThreadedExecutor`-Wahl (0.19 hat kein `ExecutorKind`-Opt-in mehr), 2 nicht-konfligierende Systeme über mehrere `run()`s |
+| `Query::par_iter()`/`par_iter_mut()` | 200 bzw. 50 Entities, inkl. 30 Wiederholungsrunden als Deadlock-/Race-Stichprobe |
+
+- **Kein Patch an `pthread-3ds` nötig.** Die Hypothese im ursprünglichen §B2
+  ("Gar nicht getestet") war, dass hier eventuell nachgebessert werden müsste
+  — tatsächlich funktionieren `pthread_create`/`pthread_join`/Mutex/Condvar/TLS
+  bereits wie von `bevy_tasks`/`bevy_ecs` erwartet, ungepatcht.
+- **`std::thread::available_parallelism()` ist auf diesem Target faktisch
+  ungestützt.** `bevy_tasks::available_parallelism()` fängt den Fehler ab und
+  liefert `1` (kein Panic) — für tatsächliche Parallelität muss
+  `TaskPoolBuilder::num_threads(...)` explizit gesetzt werden, sonst läuft der
+  "Multi-Threaded"-Executor real einthreadig.
+- **`Query::par_iter()`/`par_iter_mut()` ruft `ComputeTaskPool::get()`
+  (nicht `get_or_init()`) auf und panickt, wenn der Pool nicht vorher
+  initialisiert wurde** — ein leicht zu übersehender Ordering-Fallstrick.
+- **`ComputeTaskPool` ist ein prozessweiter `OnceLock`** — nur der erste
+  `get_or_init()`-Aufruf im ganzen Prozess bestimmt die Thread-Zahl; das macht
+  eine exakte Thread-Count-Assertion testreihenfolgeabhängig (deshalb prüft
+  der Test nur `>= 1`).
+- **Nicht abgedeckt / weiterhin offen:** alles davon auf echter **Hardware**
+  (Azahar validiert Korrektheit, nicht reale Zwei-Kern-Nebenläufigkeit/Timing
+  — §B1s Kontention-Fragen bleiben offen), `AsyncComputeTaskPool`/
+  `IoTaskPool`, echte Systemkonflikt-Serialisierung unter Last, Langlauf (§B7).
 
 ### Erledigt
 
 - ✅ `bevy_math` inkl. `rand`/`sampling` — §B9 (`bevy-math-check`, 488/488 Checks, quasi ganze API)
 - ✅ `bevy_transform` — ganze öffentliche API inkl. `TransformPlugin`/`App::update()` — §B10 (`bevy-transform-check`, 129/129 Checks)
-- ✅ `bevy_ecs` — gesamte öffentliche API single-threaded — §B14 (`bevy-ecs-check`, 135/135 Checks)
+- ✅ `bevy_ecs` — gesamte öffentliche API — §B14 (`bevy-ecs-check`, 145/145 Checks)
+- ✅ `multi_threaded` (Emulator, jetzt Crate-Default) — echte `std::thread`s über
+  `pthread-3ds`, `ComputeTaskPool`, `MultiThreadedExecutor`, `Query::par_iter` —
+  §B2/§B14-Threading (`bevy-ecs-check`, 10/10 Checks; auch Default in `all-checks`
+  und in `dove` selbst — `App::new()` + `TaskPoolPlugin`, Demo im Emulator gebootet
+  ohne Crash). Kein `pthread-3ds`-Patch nötig. Auf Hardware bleibt es offen (s. Schritt 5)
 - ✅ `bevy_app` — kompiliert, linkt **und `App::update()` läuft** (via bevy-transform-check §B10)
   — und treibt jetzt das Demo selbst: `App::new()` + `TimePlugin`, `app.update()` 60×/s im
   echten interaktiven Loop (2026-09-11)
@@ -489,10 +629,16 @@ Abgedeckt (die gesamte öffentliche API):
    — §B14 (`bevy-ecs-check`)
 4. ~~`SystemParam`-derive, `Local`, exklusives System, `ParamSet`~~ ✅ erledigt — §B14
    (`bevy-ecs-check`)
-5. **`multi_threaded`**: `Schedule` mit parallelem Executor + 2 nicht-konfligierenden Systemen,
-   `TaskPoolBuilder` auf 1–2 Threads, **auf Hardware**, Langlauf (§B1/§B2) — der harte Block
+5. ~~`multi_threaded`: `Schedule` mit parallelem Executor + 2 nicht-konfligierenden Systemen,
+   `TaskPoolBuilder` auf 1–2 Threads~~ ✅ erledigt **im Emulator** — §B2/§B14-Threading
+   (`bevy-ecs-check`, 10/10 Checks). **Noch offen: auf echter Hardware** (reale Zwei-Kern-
+   Contention/Timing, §B1) + Langlauf unter Last (§B7) — das ist jetzt der verbleibende
+   harte Block, nicht mehr "ob es überhaupt läuft"
 6. `bevy_reflect` isoliert: `#[derive(Reflect)]`, `TypeRegistry`, `Box<dyn Reflect>`, Downcast
 7. `bevy_platform::Instant` auf Hardware (§B6)
 8. ~~`bevy_app` mit manuellem `app.update()`-Loop~~ ✅ erledigt — treibt jetzt das Demo (s. o.)
-9. `bevy_transform` mit `multi_threaded` (parallele Propagation, §B10-Rest)
+9. ~~`bevy_transform` mit `multi_threaded` (parallele Propagation)~~ ❌ **blockiert** —
+   kompiliert nicht auf diesem Target, Upstream-Bug in `bevy_transform` 0.19.1
+   (`core::sync::atomic::AtomicU64` statt `bevy_platform`s Portable-Shim), §B10-Threading.
+   Übrig: entweder upstream fixen lassen oder selbst lokal patchen, falls gewünscht.
 10. Langlauf-/Speichertest (§B7)

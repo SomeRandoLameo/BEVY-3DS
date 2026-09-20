@@ -20,4 +20,6 @@ mod relationships;
 mod resources;
 mod schedule_and_conditions;
 mod system_params;
+#[cfg(feature = "multi_threaded")]
+mod threading;
 mod world;

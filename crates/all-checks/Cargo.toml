@@ -16,8 +16,8 @@ publish = false
 #   ./scripts/test-emulator.sh -p all-checks   # GDB runner -> emulator
 [dependencies]
 # union of bevy-color-check ("std"), bevy-math-check ("std","curve","rand"),
-# bevy-transform-check ("std"), bevy-ecs-check ("std"), bevy-time-check ("std"),
-# bevy-ptr-check (no features)
+# bevy-transform-check ("std"), bevy-ecs-check ("std", optional "multi_threaded"),
+# bevy-time-check ("std"), bevy-ptr-check (no features)
 bevy_ptr = { version = "0.19" }
 bevy_color = { version = "0.19", default-features = false, features = ["std"] }
 bevy_math = { version = "0.19", default-features = false, features = ["std", "curve", "rand"] }
@@ -28,11 +28,21 @@ bevy_app = { version = "0.19", default-features = false, features = ["std"] }
 bevy_time = { version = "0.19", default-features = false, features = ["std"] }
 # For `checks::plugin`'s `TimeUpdateStrategy::ManualInstant` check.
 bevy_platform = { version = "0.19", default-features = false, features = ["std"] }
+# Only for bevy-ecs-check's `checks::threading` (ComputeTaskPool/TaskPoolBuilder),
+# gated by the `multi_threaded` feature below — mirrors bevy-ecs-check's own Cargo.toml.
+bevy_tasks = { version = "0.19", default-features = false, optional = true }
 
 [features]
+default = ["multi_threaded"]
 # `--features console` swaps the GDB test runner for the interactive
 # bottom-screen menu runner (`test-console`). Tests are unchanged either way.
 console = []
+# Mirrors bevy-ecs-check's own `multi_threaded` feature (on by default there
+# too, matching normal Bevy's own default posture): pulls in bevy-ecs-check's
+# `checks::threading` (real std::thread/ComputeTaskPool/MultiThreadedExecutor
+# checks, see port.md §B2/§B14-Threading) into the aggregate `send-tests.sh all`
+# run. `--no-default-features` gets back the old opt-out build if ever needed.
+multi_threaded = ["bevy_ecs/multi_threaded", "dep:bevy_tasks", "bevy_tasks/multi_threaded"]
 
 [dev-dependencies]
 # `rand` is referenced at module scope in bevy-math-check's `checks/mod.rs`.

@@ -356,8 +356,12 @@ Funktion · Eingabe · Erwartet · **tatsächliche Ausgabe** · OK.
 | `Transform::rotate_z(PI/2) * local +X = +Y` |  | `Vec3(0.0, 1.0, 0.0)` | `Vec3(0.0, 0.99999994, 0.0)` | ✅ |
 | `Transform::rotate_axis(Z, PI/2)` |  | `Quat(0.0, 0.0, 0.70710677, 0.70710677)` | `Quat(0.0, 0.0, 0.70710677, 0.70710677)` | ✅ |
 
+## `multi_threaded`: blockiert (kompiliert nicht)
+
+`bevy_transform::systems`' parallele Propagation (`mod parallel`, der `ComputeTaskPool`-Work-Queue-Tree-Walker) nutzt für ihr geteiltes "dirty subtree"-Bitset **direkt** `core::sync::atomic::AtomicU64` (`systems.rs:119,177`) statt `bevy_platform::sync::atomic`s Portable-Atomic-Shim — den Mechanismus, den `bevy_ecs`/`bevy_tasks` korrekt nutzen und der genau deswegen auf diesem Target (keine nativen 64-Bit-Atomics) funktioniert. Ergebnis: `cargo 3ds test --no-run -p bevy-transform-check --features multi_threaded` bricht mit `error[E0425]: cannot find type 'AtomicU64' in module 'core::sync::atomic'` ab — ein **Upstream-Bug in `bevy_transform` 0.19.1**, kein Problem im `dove`-Setup. `src/checks/threading.rs` liegt fertig vorbereitet (40-Wurzeln-Parallelität, 8×15-tiefe Hierarchie, 25-Runden-Deadlock-Stresstest, spiegelt `bevy-ecs-check`s Threading-Suite), kann aber erst laufen, wenn das behoben ist. Details: `../../port.md` §B10-Threading.
+
 ## Nicht abgedeckt
 
-`multi_threaded`-Propagation (paralleler Pfad — der harte §B2-Block), sehr breite Hierarchien, `TransformPlugin` mit anderen Bevy-Plugins kombiniert, Serialisierung.
+Sehr breite Hierarchien, `TransformPlugin` mit anderen Bevy-Plugins kombiniert, Serialisierung.
 
 **Caveat:** nur Emulator. Siehe `../../port.md` §B10.

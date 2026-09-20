@@ -8,16 +8,26 @@ publish = false
 # with no `bevy_render` / `bevy_app` / windowing in the tree? Build with:
 #   cargo 3ds build -p bevy-ecs-check
 [dependencies]
-# Start minimal: core ECS + std only. No `bevy_reflect`, no `async_executor`
-# (which drags in `bevy_tasks`), no `multi_threaded`.
+# Core ECS + std, plus `multi_threaded` on by default — matches normal Bevy's
+# own default posture (the umbrella `bevy` crate enables it by default too;
+# only bevy_ecs/bevy_tasks *alone* default to single-threaded). No `bevy_reflect`.
 bevy_ecs = { version = "0.19", default-features = false, features = ["std"] }
+# Only for `checks::threading` (ComputeTaskPool/TaskPoolBuilder), gated by
+# the `multi_threaded` feature below.
+bevy_tasks = { version = "0.19", default-features = false, optional = true }
 
 [features]
+default = ["multi_threaded"]
 # `--features console` swaps the GDB test runner for the interactive
 # bottom-screen menu runner (`test-console`). Tests are unchanged either way.
 console = []
-# SCRATCH: feasibility probe, not wired into any test yet.
-multi_threaded_probe = ["bevy_ecs/multi_threaded"]
+# Pulls in bevy_tasks' async-executor/concurrent-queue/async-channel and
+# switches bevy_ecs's `default_executor()` to `MultiThreadedExecutor` (see
+# `checks::threading`). Real `std::thread`s via `pthread-3ds`, verified
+# working with no patch needed — see port.md §B1/§B2/§B14. On by default;
+# `--no-default-features` gets back the old single-threaded-only build if
+# ever needed.
+multi_threaded = ["bevy_ecs/multi_threaded", "dep:bevy_tasks", "bevy_tasks/multi_threaded"]
 
 [dev-dependencies]
 # GDB-backed test harness so `cargo 3ds test -p bevy-ecs-check` runs on

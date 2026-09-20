@@ -44,6 +44,8 @@ mod helper;
 mod layout;
 mod plugin;
 mod propagation;
+#[cfg(feature = "multi_threaded")]
+mod threading;
 mod transform_basis;
 mod transform_compose;
 mod transform_convert;

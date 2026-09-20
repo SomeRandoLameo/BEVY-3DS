@@ -8,23 +8,42 @@ publish = false
 # / `GlobalTransform` math *and* the ECS propagation systems
 # (`mark_dirty_trees` -> `propagate_parent_transforms` -> `sync_simple_transforms`).
 #
-# port.md §B2 flags that propagation uses `par_iter` / `ComputeTaskPool`; without
-# the `multi_threaded` feature bevy_transform has explicit serial fallbacks, so
-# this verifies those actually run and produce correct global transforms.
+# port.md §B2 flags that propagation uses `par_iter` / `ComputeTaskPool`. Both
+# the serial fallback (`checks::propagation`, always compiled) and the real
+# parallel propagation path (`checks::threading`, `mod parallel`'s work-queue/
+# channel-based tree walker — see `multi_threaded` below) are covered.
 #
 #   cargo 3ds build -p bevy-transform-check
 #   ./scripts/test-emulator.sh -p bevy-transform-check
 [dependencies]
 # `bevy-support` pulls bevy_ecs + bevy_app (needed for the systems module).
-# NOT `bevy_reflect`, NOT `multi_threaded`.
+# NOT `bevy_reflect`. `multi_threaded` on by default — matches normal Bevy's
+# own default posture, see crates/bevy-ecs-check/Cargo.toml and port.md §B2.
 bevy_transform = { version = "0.19", default-features = false, features = ["std", "bevy-support"] }
 bevy_ecs = { version = "0.19", default-features = false, features = ["std"] }
 bevy_math = { version = "0.19", default-features = false, features = ["std"] }
 # For the TransformPlugin / App::update() coverage.
 bevy_app = { version = "0.19", default-features = false, features = ["std"] }
+# Only for `checks::threading` (ComputeTaskPool/TaskPoolBuilder), gated by the
+# `multi_threaded` feature below.
+bevy_tasks = { version = "0.19", default-features = false, optional = true }
 
 [features]
 console = []
+# NOT crate-default, unlike bevy-ecs-check's — this currently FAILS TO
+# COMPILE on `armv6k-nintendo-3ds`. `bevy_transform::systems`' parallel
+# propagation (`mod parallel`) hardcodes `core::sync::atomic::AtomicU64`
+# directly for its shared dirty-subtree bitset, instead of routing through
+# `bevy_platform::sync::atomic`'s portable-atomic shim the way `bevy_ecs`/
+# `bevy_tasks` correctly do — and this target has no native 64-bit atomics
+# (`core::sync::atomic::AtomicU64` doesn't exist here at all). See port.md
+# §B2/§B10-Threading for the exact compile error and status.
+multi_threaded = [
+    "bevy_transform/multi_threaded",
+    "bevy_ecs/multi_threaded",
+    "dep:bevy_tasks",
+    "bevy_tasks/multi_threaded",
+]
 
 [dev-dependencies]
 test-runner = { git = "https://github.com/rust3ds/ctru-rs" }

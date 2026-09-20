@@ -21,7 +21,11 @@ ctru-rs = { git = "https://github.com/rust3ds/ctru-rs" }
 ctru-sys = { git = "https://github.com/rust3ds/ctru-rs" }
 citro3d = { git = "https://github.com/rust3ds/citro3d-rs" }
 # Core ECS only — see crates/bevy-ecs-check for why this works on the 3DS.
-bevy_ecs = { version = "0.19", default-features = false, features = ["std"] }
+# `multi_threaded` matches normal Bevy's own default posture (it's part of the
+# umbrella `bevy` crate's default features) — real threads via `pthread-3ds`,
+# verified working with no patch needed, see crates/bevy-ecs-check's
+# `checks/threading.rs` and port.md §B2/§B14-Threading.
+bevy_ecs = { version = "0.19", default-features = false, features = ["std", "multi_threaded"] }
 # glam-based vector/matrix math (Vec2/Vec3/…). No `rand`/`curve`/`bevy_reflect`.
 bevy_math = { version = "0.19", default-features = false, features = ["std"] }
 # HSL hue-cycling per triangle — see crates/bevy-color-check. No `bevy_reflect`.

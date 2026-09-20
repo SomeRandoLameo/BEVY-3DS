@@ -4,14 +4,19 @@
 //! The simulation is driven by `bevy_app` instead of a bare `bevy_ecs::World` +
 //! `Schedule`: `App::new()` — deliberately **not** `App::default()`'s wider
 //! cousin with `DefaultPlugins` (that needs `bevy_render`/`bevy_winit`, which
-//! don't exist for this target) — plus exactly one plugin, `bevy_time`'s
-//! `TimePlugin`, and our own systems on `Update`. `main()` calls
+//! don't exist for this target) — plus `bevy_app`'s `TaskPoolPlugin`,
+//! `bevy_time`'s `TimePlugin`, and our own systems on `Update`. `main()` calls
 //! [`App::update()`] once per frame instead of `Schedule::run`; this is the
 //! same `App`/`Plugin`/schedule machinery — `First` → `PreUpdate` →
 //! `RunFixedMainLoop` → `Update` → `PostUpdate` → `Last`, message registry
 //! and all — already proven on-device by `bevy-transform-check`'s and
 //! `bevy-time-check`'s own `App`-based tests, now driving a real interactive
-//! app loop instead of isolated test cases.
+//! app loop instead of isolated test cases. `bevy_ecs`'s `multi_threaded`
+//! feature is on (matching normal Bevy's own default posture), so
+//! `Schedule::default()`'s automatic `MultiThreadedExecutor` runs our systems
+//! over a real `pthread-3ds`-backed thread pool — verified working with no
+//! patch needed, see `crates/bevy-ecs-check/src/checks/threading.rs` and
+//! port.md §B2/§B14-Threading.
 //!
 //! Every entity is `(Body, Spin, Pulse, Tint)` with `bevy_math` `Vec2`
 //! positions. The sim clock is `TimePlugin`'s `Time` resource; it's pinned to
@@ -78,6 +83,36 @@ enum BottomView<'s> {
 struct Vertex {
     pos: Vec3,
     color: Vec3,
+}
+
+/// A plain-data copy of the per-entity fields `bake_vertices` needs, collected
+/// once (single-threaded, no trig) so the actual per-triangle math below can
+/// run across `std::thread::scope`'d chunks instead.
+#[derive(Copy, Clone)]
+struct TriangleInput {
+    pos: Vec2,
+    angle: f32,
+    pulse_base: f32,
+    pulse_amp: f32,
+    pulse_freq: f32,
+    pulse_phase: f32,
+    colors: [Vec3; 3],
+}
+
+/// Turns one chunk of `TriangleInput`s into their 3 corner `Vertex`es each,
+/// writing into the matching chunk of the shared vertex buffer. `out` must be
+/// exactly `inputs.len() * 3` long — the caller (the render loop) gets that
+/// from a single `split_at_mut`, so each of the two `std::thread::scope`d
+/// calls only ever touches its own disjoint slice.
+fn bake_vertices(inputs: &[TriangleInput], elapsed: f32, out: &mut [Vertex]) {
+    for (input, out_verts) in inputs.iter().zip(out.chunks_exact_mut(3)) {
+        let scale = input.pulse_base + input.pulse_amp * (elapsed * input.pulse_freq + input.pulse_phase).sin();
+        let rotation = Vec2::from_angle(input.angle);
+        for ((&offset, &color), vert) in BASE.iter().zip(&input.colors).zip(out_verts.iter_mut()) {
+            let p = rotation.rotate(offset) * scale + input.pos;
+            *vert = Vertex { pos: Vec3::new(p.x, p.y, SCENE_Z), color };
+        }
+    }
 }
 
 /// The unit triangle's three corner offsets, centred on the origin. The
@@ -151,15 +186,20 @@ struct Tint {
 /// module docs.
 const DT: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
+// `par_iter_mut()` instead of a plain `for` loop: with `multi_threaded` on
+// (see Cargo.toml), these run across `ComputeTaskPool`'s real threads
+// instead of one-at-a-time — see `crates/bevy-ecs-check`'s `checks/threading.rs`
+// for why that's safe/correct on this target.
+
 fn drift(time: Res<Time>, mut bodies: Query<&mut Body>) {
-    for mut b in &mut bodies {
+    bodies.par_iter_mut().for_each(|mut b| {
         let step = b.vel * time.delta_secs();
         b.pos += step;
-    }
+    });
 }
 
 fn bounce(mut bodies: Query<&mut Body>) {
-    for mut b in &mut bodies {
+    bodies.par_iter_mut().for_each(|mut b| {
         if b.pos.x.abs() > BOUND_X {
             b.pos.x = b.pos.x.clamp(-BOUND_X, BOUND_X);
             b.vel.x = -b.vel.x;
@@ -168,20 +208,20 @@ fn bounce(mut bodies: Query<&mut Body>) {
             b.pos.y = b.pos.y.clamp(-BOUND_Y, BOUND_Y);
             b.vel.y = -b.vel.y;
         }
-    }
+    });
 }
 
 fn spin(time: Res<Time>, mut spins: Query<&mut Spin>) {
-    for mut s in &mut spins {
+    spins.par_iter_mut().for_each(|mut s| {
         s.angle += s.rate * time.delta_secs();
-    }
+    });
 }
 
 /// Spins each entity's hue and rebakes its three corner colours. `Hue::rotate_hue`
 /// does the wrap-around at 360°; `Srgba::from(Hsla)` + `ColorToComponents::to_vec3`
 /// turn each corner's swatch into the `Vec3` the vertex buffer wants.
 fn tint(time: Res<Time>, mut tints: Query<&mut Tint>) {
-    for mut t in &mut tints {
+    tints.par_iter_mut().for_each(|mut t| {
         let hue = (t.hue + t.hue_rate * time.delta_secs()).rem_euclid(360.0);
         t.hue = hue;
         let swatch = Hsla::hsl(hue, TINT_SATURATION, TINT_LIGHTNESS);
@@ -189,7 +229,7 @@ fn tint(time: Res<Time>, mut tints: Query<&mut Tint>) {
         for (color, offset) in t.colors.iter_mut().zip(offsets) {
             *color = Srgba::from(swatch.rotate_hue(offset)).to_vec3();
         }
-    }
+    });
 }
 
 /// Tiny xorshift RNG so each spawned triangle gets its own motion without the
@@ -255,7 +295,16 @@ fn main() {
 
     let gfx = Gfx::new().expect("Couldn't obtain GFX controller");
     let mut hid = Hid::new().expect("Couldn't obtain HID controller");
-    let apt = Apt::new().expect("Couldn't obtain APT controller");
+    let mut apt = Apt::new().expect("Couldn't obtain APT controller");
+    // Old 3DS's second core (core #1, the "system core") is reserved for OS
+    // services by default — homebrew gets 0% of it until this is called, so
+    // without it every thread we spawn (TaskPoolPlugin's pool, the render
+    // loop's `std::thread::scope`) ends up contending for core #0 alone, no
+    // real parallelism (confirmed on real Old 3DS hardware: 8k triangles at
+    // 9.7fps regardless). New 3DS is unaffected — its extra cores #2/#3 are
+    // free for homebrew without this — but the call is harmless there too.
+    // 30% matches ctru-rs's own recommended range (5-89%, "around 30-45%").
+    apt.set_app_cpu_time_limit(30).expect("Failed to enable the system core");
 
     // Route stdout/stderr back over `3dslink --server` so we can watch the FPS.
     let mut soc = Soc::new().ok();
@@ -306,8 +355,17 @@ fn main() {
 
     // --- bevy_app ---
     // `App::new()`, not `App::default()`'s `DefaultPlugins` cousin (needs
-    // bevy_render/bevy_winit) — just `TimePlugin` and our own systems.
+    // bevy_render/bevy_winit) — just `TaskPoolPlugin`, `TimePlugin`, and our
+    // own systems. `TaskPoolPlugin` sets up `ComputeTaskPool` before any
+    // schedule runs, so `Schedule::default()`'s `MultiThreadedExecutor`
+    // (automatic once bevy_ecs's `multi_threaded` feature is on — see
+    // Cargo.toml) gets real parallelism instead of silently falling back to
+    // 1 thread: `bevy_tasks::available_parallelism()` isn't meaningfully
+    // supported on this target (see crates/bevy-ecs-check's
+    // `checks/threading.rs`), so size it explicitly for the 3DS's usable
+    // cores instead of trusting the auto-detected default.
     let mut app = App::new();
+    app.add_plugins(TaskPoolPlugin { task_pool_options: TaskPoolOptions::with_num_threads(2) });
     app.add_plugins(TimePlugin);
     // Pin the clock to a fixed step advanced every `app.update()`, instead of
     // `TimePlugin`'s default `Automatic` strategy (which would call
@@ -383,21 +441,38 @@ fn main() {
         app.update();
 
         // Bake every triangle into one shared vertex buffer in linear memory.
+        // Collecting `TriangleInput`s is single-threaded (cheap field copies,
+        // no trig); the actual per-triangle math (the `sin()` + rotate below)
+        // is the part that scales with triangle count, so that's what gets
+        // split across `std::thread::scope`'d chunks.
         let elapsed = app.world().resource::<Time>().elapsed_secs();
-        let mut verts: Vec<Vertex, LinearAllocator> =
-            Vec::with_capacity_in(triangles.len() * 3, LinearAllocator);
         let mut query = app.world_mut().query::<(&Body, &Spin, &Pulse, &Tint)>();
-        for (body, spin, pulse, tint) in query.iter(app.world()) {
-            let scale = pulse.base + pulse.amp * (elapsed * pulse.freq + pulse.phase).sin();
-            let rotation = Vec2::from_angle(spin.angle);
-            for (&offset, &color) in BASE.iter().zip(&tint.colors) {
-                let p = rotation.rotate(offset) * scale + body.pos;
-                verts.push(Vertex {
-                    pos: Vec3::new(p.x, p.y, SCENE_Z),
-                    color,
-                });
-            }
-        }
+        let inputs: Vec<TriangleInput> = query
+            .iter(app.world())
+            .map(|(body, spin, pulse, tint)| TriangleInput {
+                pos: body.pos,
+                angle: spin.angle,
+                pulse_base: pulse.base,
+                pulse_amp: pulse.amp,
+                pulse_freq: pulse.freq,
+                pulse_phase: pulse.phase,
+                colors: tint.colors,
+            })
+            .collect();
+
+        let mut verts: Vec<Vertex, LinearAllocator> =
+            Vec::with_capacity_in(inputs.len() * 3, LinearAllocator);
+        verts.resize(inputs.len() * 3, Vertex { pos: Vec3::ZERO, color: Vec3::ZERO });
+
+        // Two chunks, matching the 2 `TaskPoolPlugin` threads set up above —
+        // the 3DS's usable-core baseline throughout this project.
+        let mid = inputs.len() / 2;
+        let (inputs_a, inputs_b) = inputs.split_at(mid);
+        let (verts_a, verts_b) = verts.split_at_mut(mid * 3);
+        std::thread::scope(|scope| {
+            scope.spawn(|| bake_vertices(inputs_a, elapsed, verts_a));
+            scope.spawn(|| bake_vertices(inputs_b, elapsed, verts_b));
+        });
 
         let mut frame_buffer = buffer::Info::new();
         if !verts.is_empty() {
@@ -700,5 +775,45 @@ mod tests {
         let tint = app.world().entity(e).get::<Tint>().unwrap();
         assert!((tint.hue - 90.0 * dt).abs() < 1e-4, "hue = {}", tint.hue);
         assert!(tint.colors.iter().all(|c| *c != Vec3::ZERO), "tint baked real colors");
+    }
+
+    /// `bake_vertices` is what the render loop now runs across two
+    /// `std::thread::scope`d chunks instead of one sequential loop (the part
+    /// that actually scales with triangle count — see the module docs).
+    /// Splitting the input arbitrarily and baking each half separately must
+    /// produce exactly the same vertices as baking it all in one call, since
+    /// each triangle's math only depends on its own `TriangleInput`.
+    #[test]
+    fn bake_vertices_split_into_chunks_matches_one_big_chunk() {
+        let inputs: Vec<TriangleInput> = (0..7)
+            .map(|i| TriangleInput {
+                pos: Vec2::new(i as f32, -(i as f32)),
+                angle: i as f32 * 0.3,
+                pulse_base: 1.0,
+                pulse_amp: 0.2,
+                pulse_freq: 1.5,
+                pulse_phase: 0.1,
+                colors: [Vec3::new(i as f32, 0.0, 0.0); 3],
+            })
+            .collect();
+        let elapsed = 2.5;
+
+        let mut all_at_once = vec![Vertex { pos: Vec3::ZERO, color: Vec3::ZERO }; inputs.len() * 3];
+        bake_vertices(&inputs, elapsed, &mut all_at_once);
+
+        // An uneven split (2 vs. 5) — not just a clean half-and-half — to
+        // make sure chunk boundaries aren't accidentally load-bearing.
+        let mut chunked = vec![Vertex { pos: Vec3::ZERO, color: Vec3::ZERO }; inputs.len() * 3];
+        let (in_a, in_b) = inputs.split_at(2);
+        let (out_a, out_b) = chunked.split_at_mut(2 * 3);
+        bake_vertices(in_a, elapsed, out_a);
+        bake_vertices(in_b, elapsed, out_b);
+
+        for (a, b) in all_at_once.iter().zip(&chunked) {
+            assert_eq!(a.pos, b.pos);
+            assert_eq!(a.color, b.color);
+        }
+        // Sanity: this isn't just comparing two all-zero buffers.
+        assert!(all_at_once.iter().any(|v| v.pos != Vec3::ZERO));
     }
 }
